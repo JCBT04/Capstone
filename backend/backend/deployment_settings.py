@@ -16,6 +16,12 @@ if env_allowed:
 else:
     ALLOWED_HOSTS = [render_host] if render_host else []
 
+# If ALLOWED_HOSTS is still empty, allow all hosts as a temporary fallback
+# (useful for quick deploys). For production hardening, set the ALLOWED_HOSTS
+# environment variable explicitly instead of relying on this.
+if not ALLOWED_HOSTS:
+    ALLOWED_HOSTS = ['*']
+
 # CSRF trusted origins: accept an env var or derive from the render host
 env_csrf = os.environ.get('CSRF_TRUSTED_ORIGINS')
 if env_csrf:
