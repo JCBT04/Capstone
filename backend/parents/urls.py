@@ -7,6 +7,7 @@ from .views import (
     ParentGuardianListView,
     StudentDetailView,
     AllTeachersStudentsView,
+    ParentLoginView,
 )
 
 urlpatterns = [
@@ -17,6 +18,6 @@ urlpatterns = [
     path('parents/', ParentGuardianListView.as_view(), name='parents-list'),
     path('students/<str:lrn>/', StudentDetailView.as_view(), name='student-detail'),
     path('all-teachers-students/', AllTeachersStudentsView.as_view(), name='all-teachers-students'),
-    
+     #new
     path('login/', ParentLoginView.as_view(), name='parent-login'),
 ]

@@ -137,5 +137,5 @@ CORS_ALLOW_ALL_ORIGINS = True
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:8000",  # React frontend (local development)
-    "https://github.com/JCBT04/Capstone/"  # Your GitHub Pages frontend URL
+    # removed invalid origin with path - add only scheme+host (e.g. https://example.com) if needed
 ]
