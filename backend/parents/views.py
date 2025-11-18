@@ -1,7 +1,7 @@
 import logging
 import json
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q
 from django.utils import timezone
 from rest_framework import permissions, status
 from rest_framework.response import Response
@@ -429,7 +429,7 @@ class ParentNotificationListCreateView(APIView):
             return Response(output, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
+# new
 class ParentEventListCreateView(APIView):
     """
     Read/create events tied to ParentGuardian records.
@@ -442,13 +442,24 @@ class ParentEventListCreateView(APIView):
         limit = request.query_params.get('limit')
         upcoming = request.query_params.get('upcoming')
 
+        logger.debug(
+            "ParentEventListCreateView.get called parent=%s lrn=%s limit=%s upcoming=%s",
+            parent_id,
+            lrn,
+            limit,
+            upcoming,
+        )
+
         queryset = ParentEvent.objects.select_related('parent', 'student').order_by('-scheduled_at', '-created_at')
         if parent_id:
             queryset = queryset.filter(parent_id=parent_id)
         if lrn:
             queryset = queryset.filter(student__lrn=lrn)
         if upcoming and str(upcoming).lower() in ('1', 'true', 'yes'):
-            queryset = queryset.filter(scheduled_at__gte=timezone.now())
+            now = timezone.now()
+            queryset = queryset.filter(
+                Q(scheduled_at__gte=now) | Q(scheduled_at__isnull=True)
+            )
         if limit:
             try:
                 limit_value = max(1, min(int(limit), 200))
@@ -457,6 +468,10 @@ class ParentEventListCreateView(APIView):
                 logger.warning("Invalid limit param for events: %s", limit)
 
         serializer = ParentEventSerializer(queryset, many=True)
+        logger.debug(
+            "ParentEventListCreateView returning %s events",
+            len(serializer.data)
+        )
         return Response(serializer.data)
 
     def post(self, request):
@@ -467,7 +482,7 @@ class ParentEventListCreateView(APIView):
             return Response(output, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
+# new
 class StudentDetailView(APIView):
     """
     Get details for a single student (must belong to authenticated teacher).

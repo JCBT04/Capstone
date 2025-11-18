@@ -95,7 +95,7 @@ class ParentNotificationAdmin(admin.ModelAdmin):
         return (obj.message[:50] + '...') if obj.message and len(obj.message) > 50 else obj.message
     message_preview.short_description = 'Message'
 
-
+# new
 @admin.register(ParentEvent)
 class ParentEventAdmin(admin.ModelAdmin):
     list_display = ['id', 'parent', 'title', 'event_type', 'scheduled_at', 'created_at']

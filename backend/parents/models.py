@@ -101,6 +101,7 @@ class ParentNotification(models.Model):
         return f"Notification to {parent_name}: {self.type}"
 
 
+# new
 class ParentEvent(models.Model):
     EVENT_TYPES = [
         ('school', 'School'),
