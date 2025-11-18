@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-$wq1cp7bmhjhh1v@qfn%f+%zv^urvx22hz8fl9faye2y__m&o4
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['https://capstone-foal.onrender.com/', 'localhost', ]
 
 
 # Application definition
@@ -131,3 +131,8 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 CORS_ALLOW_ALL_ORIGINS = True
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:8000",  # React frontend (local development)
+    "https://github.com/JCBT04/Capstone/"  # Your GitHub Pages frontend URL
+]
