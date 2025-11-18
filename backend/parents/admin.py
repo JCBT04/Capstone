@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Student, ParentGuardian
+from .models import Student, ParentGuardian, ParentNotification
 
 @admin.register(Student)
 class StudentAdmin(admin.ModelAdmin):
@@ -68,3 +68,29 @@ class ParentGuardianAdmin(admin.ModelAdmin):
             except:
                 return qs.none()
         return qs
+
+# new
+@admin.register(ParentNotification)
+class ParentNotificationAdmin(admin.ModelAdmin):
+    list_display = ['id', 'parent', 'student', 'type', 'message_preview', 'created_at']
+    list_filter = ['type', 'created_at']
+    search_fields = ['parent__name', 'parent__username', 'student__name', 'student__lrn', 'message']
+    readonly_fields = ['created_at']
+    autocomplete_fields = ['parent', 'student']
+
+    fieldsets = (
+        ('Notification Target', {
+            'fields': ('parent', 'student')
+        }),
+        ('Content', {
+            'fields': ('type', 'message', 'extra_data')
+        }),
+        ('System', {
+            'fields': ('created_at',),
+            'classes': ('collapse',)
+        })
+    )
+
+    def message_preview(self, obj):
+        return (obj.message[:50] + '...') if obj.message and len(obj.message) > 50 else obj.message
+    message_preview.short_description = 'Message'
