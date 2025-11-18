@@ -27,6 +27,11 @@ CORS_ALLOWED_ORIGINS = [
     "https://appdev-todolist-fullstack.onrender.com"
 ]
 
+# Static files (for collectstatic on Render)
+# Ensure STATIC_URL and STATIC_ROOT are set so collectstatic can write files.
+STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+
 STORAGES ={
      "default":{
           "BACKEND": "django.core.files.storage.FileSystemStorage",
