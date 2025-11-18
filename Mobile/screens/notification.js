@@ -9,8 +9,10 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../components/ThemeContext";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-
+const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
+const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 const Notifications = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();
   const isDark = darkModeEnabled;
@@ -58,7 +60,20 @@ const Notifications = ({ navigation }) => {
 
     const fetchNotifications = async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/api/notifications/`);
+        const parentRaw = await AsyncStorage.getItem("parent");
+        let query = "";
+        if (parentRaw) {
+          try {
+            const parent = JSON.parse(parentRaw);
+            if (parent && parent.id) {
+              query = `?parent=${encodeURIComponent(parent.id)}`;
+            }
+          } catch (err) {
+            console.warn("Failed to parse parent cache", err);
+          }
+        }
+
+        const res = await fetch(`${BACKEND_URL}/api/notifications/${query}`);
         if (!res.ok) throw new Error('Network response not ok');
         const data = await res.json();
         if (!mounted) return;
