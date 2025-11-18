@@ -6,7 +6,12 @@ import sys
 
 def main():
     """Run administrative tasks."""
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
+    # If we're running on Render, use the deployment settings which set
+    # STATIC_ROOT and other production-ready configuration.
+    if os.environ.get('RENDER') or os.environ.get('RENDER_EXTERNAL_HOSTNAME'):
+        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.deployment_settings')
+    else:
+        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:
