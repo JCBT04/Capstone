@@ -25,7 +25,10 @@ SECRET_KEY = 'django-insecure-$wq1cp7bmhjhh1v@qfn%f+%zv^urvx22hz8fl9faye2y__m&o4
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['https://capstone-foal.onrender.com/', 'localhost', ]
+AALLOWED_HOSTS = [
+    'capstone-foal.onrender.com',
+    'localhost',
+]
 
 
 # Application definition
