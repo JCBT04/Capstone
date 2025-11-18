@@ -12,6 +12,8 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../components/ThemeContext";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
+const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 
 const ChangePassword = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();
@@ -26,18 +28,20 @@ const ChangePassword = ({ navigation }) => {
   const [showConfirm, setShowConfirm] = useState(false);
 
   const [loading, setLoading] = useState(false);
+  const [currentError, setCurrentError] = useState("");
 
   const handleSave = async () => {
+    setCurrentError("");
     if (!currentPassword || !newPassword || !confirmPassword) {
-      alert('Please fill all fields');
+      setCurrentError("Please fill all fields");
       return;
     }
     if (newPassword !== confirmPassword) {
-      alert('New passwords do not match!');
+      setCurrentError("New passwords do not match");
       return;
     }
     if (newPassword.length < 6) {
-      alert('New password must be at least 6 characters');
+      setCurrentError("New password must be at least 6 characters");
       return;
     }
 
@@ -45,52 +49,103 @@ const ChangePassword = ({ navigation }) => {
     try {
       const username = await AsyncStorage.getItem('username');
       if (!username) {
-        alert('No logged-in user found');
+        setCurrentError("No logged-in user found");
         setLoading(false);
         return;
       }
 
-      // Find parent by username
-      const resp = await fetch(`${BACKEND_URL}/api/parent/`);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      let data = await resp.json();
-      if (data && data.results) data = data.results;
-      if (!Array.isArray(data)) data = [];
+      const token = await AsyncStorage.getItem('token');
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers['Authorization'] = `Token ${token}`;
+      }
 
-      const parent = data.find(p => p && p.username === username);
+      let storedParent = null;
+      try {
+        const storedParentRaw = await AsyncStorage.getItem('parent');
+        if (storedParentRaw) {
+          storedParent = JSON.parse(storedParentRaw);
+        }
+      } catch (e) {
+        console.warn('Failed to parse stored parent data', e);
+      }
+
+      let parent = (storedParent && storedParent.username === username) ? storedParent : null;
+
       if (!parent) {
-        alert('Parent record not found');
+        try {
+          const resp = await fetch(`${BACKEND_URL}/api/parents/parents/`, { headers });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          let data = await resp.json();
+          if (data && data.results) data = data.results;
+          if (!Array.isArray(data)) data = [];
+          parent = data.find(p => p && p.username === username);
+        } catch (fetchErr) {
+          console.warn('Failed to load parent list', fetchErr);
+        }
+      }
+
+      if (!parent) {
+        setCurrentError("Parent record not found");
         setLoading(false);
         return;
       }
 
       // Verify current password (backend appears to store plain password in this project)
       if (parent.password !== currentPassword) {
-        alert('Current password is incorrect');
+        setCurrentError("Current password is incorrect");
         setLoading(false);
         return;
       }
 
       // Send PATCH to update password
-      const patchRes = await fetch(`${BACKEND_URL}/api/parent/${parent.id}/`, {
+      const patchRes = await fetch(`${BACKEND_URL}/api/parents/parents/${parent.id}/`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: newPassword }),
+        headers,
+        body: JSON.stringify({ password: newPassword, current_password: currentPassword }),
       });
 
       if (!patchRes.ok) {
-        const txt = await patchRes.text();
-        console.warn('Password update failed:', patchRes.status, txt);
-        alert('Failed to update password');
+        const raw = (await patchRes.text()) || "";
+        console.warn('Password update failed:', patchRes.status, raw);
+
+        const normalized = raw.toLowerCase();
+        if (patchRes.status === 401 || normalized.includes("current")) {
+          setCurrentError("Current password is incorrect");
+          setLoading(false);
+          return;
+        }
+
+        if (normalized.includes("match")) {
+          setCurrentError("New passwords do not match");
+          setLoading(false);
+          return;
+        }
+
+        if (normalized.includes("short") || normalized.includes("minimum")) {
+          setCurrentError("New password must be at least 6 characters");
+          setLoading(false);
+          return;
+        }
+
+        setCurrentError("Failed to update password");
         setLoading(false);
         return;
       }
 
+      const updatedParent = { ...parent, password: newPassword };
+      try {
+        await AsyncStorage.setItem('parent', JSON.stringify(updatedParent));
+      } catch (e) {
+        console.warn('Failed to cache updated parent password', e);
+      }
+
+      setCurrentError("");
       alert('Password changed successfully');
       navigation.goBack();
     } catch (err) {
       console.warn('Error changing password', err);
-      alert('Error changing password — check network');
+      setCurrentError("Error changing password — check network");
     } finally {
       setLoading(false);
     }
@@ -199,6 +254,12 @@ const ChangePassword = ({ navigation }) => {
             </TouchableOpacity>
           </View>
 
+          {currentError ? (
+            <Text style={[styles.errorText, { color: isDark ? "#ff7675" : "#c0392b" }]}>
+              {currentError}
+            </Text>
+          ) : null}
+
           {/* Save Button */}
           <TouchableOpacity
             style={[
@@ -253,6 +314,11 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     alignItems: "center",
     marginTop: 20,
+  },
+  errorText: {
+    fontSize: 14,
+    marginBottom: 8,
+    textAlign: "center",
   },
   saveText: {
     color: "#fff",
