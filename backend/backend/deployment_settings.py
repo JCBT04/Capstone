@@ -24,7 +24,7 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
-    "https://appdev-todolist-fullstack.onrender.com"
+    'https://capstone-foal.onrender.com',
 ]
 
 # Static files (for collectstatic on Render)
