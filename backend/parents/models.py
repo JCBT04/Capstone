@@ -66,3 +66,37 @@ class ParentGuardian(models.Model):
         ordering = ['teacher', 'student', 'role']
         verbose_name = "Parent/Guardian"
         verbose_name_plural = "Parents/Guardians"
+
+# new
+class ParentNotification(models.Model):
+    NOTIFICATION_TYPES = [
+        ('attendance', 'Attendance'),
+        ('pickup', 'Pickup'),
+        ('event', 'Event'),
+        ('other', 'Other'),
+    ]
+
+    parent = models.ForeignKey(
+        ParentGuardian,
+        on_delete=models.CASCADE,
+        related_name='notifications'
+    )
+    student = models.ForeignKey(
+        Student,
+        on_delete=models.CASCADE,
+        related_name='notifications',
+        blank=True,
+        null=True
+    )
+    type = models.CharField(max_length=32, choices=NOTIFICATION_TYPES, default='other')
+    message = models.TextField()
+    extra_data = models.JSONField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        parent_name = self.parent.name if self.parent_id else 'Unknown'
+        return f"Notification to {parent_name}: {self.type}"
+

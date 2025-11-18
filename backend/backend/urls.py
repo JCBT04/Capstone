@@ -18,12 +18,14 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from parents.views import ParentNotificationListCreateView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('teacher.urls')),
     path('api/guardian/', include('guardian.urls')),
     path('api/parents/', include('parents.urls')),  # ✅ ADD THIS
+    path('api/notifications/', ParentNotificationListCreateView.as_view(), name='notifications'),
 ]
 
 if settings.DEBUG:

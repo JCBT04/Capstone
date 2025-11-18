@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Student, ParentGuardian
+from .models import Student, ParentGuardian, ParentNotification
 from teacher.models import TeacherProfile
 
 
@@ -59,6 +59,33 @@ class ParentGuardianSerializer(serializers.ModelSerializer):
             'created_at',
         ]
         read_only_fields = ['created_at', 'teacher']
+
+# new
+class ParentNotificationSerializer(serializers.ModelSerializer):
+    parent_name = serializers.CharField(source='parent.name', read_only=True)
+    student_name = serializers.CharField(source='student.name', read_only=True)
+    student_lrn = serializers.CharField(source='student.lrn', read_only=True)
+
+    class Meta:
+        model = ParentNotification
+        fields = [
+            'id',
+            'parent',
+            'parent_name',
+            'student',
+            'student_name',
+            'student_lrn',
+            'type',
+            'message',
+            'extra_data',
+            'created_at',
+        ]
+        read_only_fields = ['created_at']
+
+    def create(self, validated_data):
+        if not validated_data.get('student'):
+            validated_data['student'] = validated_data['parent'].student
+        return super().create(validated_data)
 
 
 class RegistrationSerializer(serializers.Serializer):

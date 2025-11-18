@@ -9,6 +9,7 @@ from .views import (
     AllTeachersStudentsView,
     ParentLoginView,
     ParentDetailView,
+    ParentNotificationListCreateView,
 )
 
 urlpatterns = [
@@ -22,5 +23,5 @@ urlpatterns = [
      #new
     path('login/', ParentLoginView.as_view(), name='parent-login'),
     path('parents/<int:pk>/', ParentDetailView.as_view(), name='parent-detail'),
-
+    path('notifications/', ParentNotificationListCreateView.as_view(), name='parent-notifications'),
 ]

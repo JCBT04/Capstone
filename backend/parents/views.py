@@ -8,13 +8,14 @@ from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
-from .models import Student, ParentGuardian
+from .models import Student, ParentGuardian, ParentNotification
 from teacher.models import TeacherProfile
 from .serializers import (
     StudentSerializer,
     ParentGuardianSerializer,
     RegistrationSerializer,
-    TeacherStudentsSerializer
+    TeacherStudentsSerializer,
+    ParentNotificationSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -391,9 +392,42 @@ class ParentDetailView(APIView):
         response_data['debug'] = debug_info
         return Response(response_data)
 
+# new
+class ParentNotificationListCreateView(APIView):
+    """
+    Read/create notifications tied to ParentGuardian records.
+    """
+    permission_classes = [permissions.AllowAny]
 
+    def get(self, request):
+        parent_id = request.query_params.get('parent')
+        lrn = request.query_params.get('lrn')
+        limit = request.query_params.get('limit')
 
+        queryset = ParentNotification.objects.select_related('parent', 'student').order_by('-created_at')
+        if parent_id:
+            queryset = queryset.filter(parent_id=parent_id)
+        if lrn:
+            queryset = queryset.filter(student__lrn=lrn)
+        if limit:
+            try:
+                limit_value = max(1, min(int(limit), 200))
+                queryset = queryset[:limit_value]
+            except (TypeError, ValueError):
+                logger.warning("Invalid limit param for notifications: %s", limit)
 
+        serializer = ParentNotificationSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        serializer = ParentNotificationSerializer(data=request.data)
+        if serializer.is_valid():
+            notification = serializer.save()
+            output = ParentNotificationSerializer(notification).data
+            return Response(output, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+# new
 class StudentDetailView(APIView):
     """
     Get details for a single student (must belong to authenticated teacher).
