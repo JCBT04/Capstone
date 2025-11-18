@@ -6,6 +6,8 @@ import { LinearGradient } from "expo-linear-gradient"; // ✅ Added gradient
 import { useTheme } from "../components/ThemeContext";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
+const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 
 const Attendance = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();
@@ -17,6 +19,9 @@ const Attendance = ({ navigation }) => {
     const d = new Date();
     return { year: d.getFullYear(), month: d.getMonth() + 1 };
   });
+  const [kids, setKids] = useState([]);
+  const [activeKidIndex, setActiveKidIndex] = useState(0);
+  const activeKid = kids[activeKidIndex] || null;
   // School year boundaries (SY 2025-2026)
   const SY_START = new Date(2025, 5, 16); // June 16, 2025 (month is 0-based)
   const SY_END = new Date(2026, 2, 31); // March 31, 2026
@@ -57,8 +62,8 @@ const Attendance = ({ navigation }) => {
     // Override with actual records (present/absent/other)
     recordsForMonth.forEach(a => {
       const date = a.date; if (!date) return;
-      const status = a.status || 'present';
-      const color = status === 'present' ? 'green' : (status === 'absent' ? 'red' : 'orange');
+      const normalizedStatus = (a.status || 'present').toLowerCase();
+      const color = normalizedStatus === 'present' ? 'green' : (normalizedStatus === 'absent' ? 'red' : 'orange');
       map[date] = {
         customStyles: {
           container: { backgroundColor: color, borderRadius: 8 },
@@ -68,6 +73,63 @@ const Attendance = ({ navigation }) => {
     });
 
     return map;
+  };
+
+  const fetchParentsForUsername = async (username) => {
+    const token = await AsyncStorage.getItem('token');
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Token ${token}`;
+
+    try {
+      const parentsResp = await fetch(`${BACKEND_URL}/api/parents/parents/`, { headers });
+      if (!parentsResp.ok) {
+        throw new Error(`HTTP ${parentsResp.status}`);
+      }
+      const data = await parentsResp.json();
+      let parentsList = Array.isArray(data) ? data : (data && data.results ? data.results : []);
+      parentsList = parentsList.filter(p => p.username === username);
+      if (parentsList.length) return parentsList;
+    } catch (e) {
+      console.warn('Failed to fetch parents from API, falling back to cached parent', e);
+    }
+
+    try {
+      const storedParent = await AsyncStorage.getItem('parent');
+      if (storedParent) {
+        const parsed = JSON.parse(storedParent);
+        if (parsed && parsed.username === username) {
+          return [parsed];
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to read parent from storage', e);
+    }
+    return [];
+  };
+
+  const fetchAttendanceRecords = async (kid) => {
+    if (!kid) return [];
+    const { name: studentName, lrn: studentLrn } = kid;
+    if (!studentName && !studentLrn) return [];
+
+    const resp = await fetch(`${BACKEND_URL}/api/attendance/public/`);
+    if (!resp.ok) {
+      throw new Error(`Attendance HTTP ${resp.status}`);
+    }
+    let data = await resp.json();
+    if (data && data.results) data = data.results;
+    if (!Array.isArray(data)) data = [];
+
+    const normalizedKidName = (studentName || '').trim().toLowerCase();
+    const normalizedKidLrn = (studentLrn || '').trim();
+    const filtered = data.filter(a => {
+      const recName = (a.student_name || '').trim().toLowerCase();
+      const recLrn = (a.student_lrn || '').trim();
+      const matchesName = normalizedKidName && recName === normalizedKidName;
+      const matchesLrn = normalizedKidLrn && recLrn && recLrn === normalizedKidLrn;
+      return matchesName || matchesLrn;
+    });
+    return filtered;
   };
 
   useEffect(() => {
@@ -83,46 +145,35 @@ const Attendance = ({ navigation }) => {
           return;
         }
 
-        // find parent by username
-        const parentsResp = await fetch(`${BACKEND_URL}/api/parent/`);
-        const parentsData = await parentsResp.json();
-        const parent = Array.isArray(parentsData)
-          ? parentsData.find(p => p.username === username)
-          : (parentsData && parentsData.results ? parentsData.results.find(p => p.username === username) : null);
-
-        if (!parent) {
+        const parentsList = await fetchParentsForUsername(username);
+        if (!parentsList.length) {
           if (isMounted) setLoading(false);
           return;
         }
 
-        // get student id for this parent
-        const studentsResp = await fetch(`${BACKEND_URL}/api/student/`);
-        let studentsData = await studentsResp.json();
-        if (studentsData && studentsData.results) studentsData = studentsData.results;
-        if (!Array.isArray(studentsData)) studentsData = [];
+        const kidsData = parentsList
+          .filter(p => p && p.student_name)
+          .map(p => ({
+            id: p.student_lrn || p.student || p.id,
+            lrn: p.student_lrn || '',
+            name: p.student_name,
+            teacherName: p.teacher_name || '',
+            teacherPhone: p.contact_number || '',
+          }));
 
-        const student = studentsData.find(s => {
-          if (!s) return false;
-          const sParent = s.parent;
-          if (sParent == null) return false;
-          if (typeof sParent === 'object') return (sParent.id === parent.id || sParent === parent.id);
-          return sParent === parent.id;
-        });
-
-        if (!student) {
+        if (!kidsData.length) {
           if (isMounted) setLoading(false);
           return;
         }
 
-        // fetch attendance for this student (no date filter)
-        const attResp = await fetch(`${BACKEND_URL}/api/attendance/?student=${student.id}`);
-        let attData = await attResp.json();
-        if (attData && attData.results) attData = attData.results;
-        if (!Array.isArray(attData)) attData = [];
-
+        const nextActiveIndex = Math.min(activeKidIndex, kidsData.length - 1);
+        const kid = kidsData[nextActiveIndex];
+        const attData = await fetchAttendanceRecords(kid);
         const map = buildMarkedForMonth(attData, currentMonth.year, currentMonth.month);
 
         if (isMounted) {
+          setKids(kidsData);
+          setActiveKidIndex(nextActiveIndex);
           setAttDataState(attData);
           setMarkedDates(map);
           setLoading(false);
@@ -143,40 +194,12 @@ const Attendance = ({ navigation }) => {
     const { year, month } = monthObj;
     setCurrentMonth({ year, month });
 
-    // attempt to re-use already fetched attendance by calling the same endpoint again
+    const kid = kids[activeKidIndex] || kids[0];
+    if (!kid) return;
+
     setLoading(true);
     try {
-      const username = await AsyncStorage.getItem('username');
-      if (!username) {
-        setLoading(false);
-        return;
-      }
-      const parentsResp = await fetch(`${BACKEND_URL}/api/parent/`);
-      const parentsData = await parentsResp.json();
-      const parent = Array.isArray(parentsData)
-        ? parentsData.find(p => p.username === username)
-        : (parentsData && parentsData.results ? parentsData.results.find(p => p.username === username) : null);
-      if (!parent) { setLoading(false); return; }
-
-      const studentsResp = await fetch(`${BACKEND_URL}/api/student/`);
-      let studentsData = await studentsResp.json();
-      if (studentsData && studentsData.results) studentsData = studentsData.results;
-      if (!Array.isArray(studentsData)) studentsData = [];
-      const student = studentsData.find(s => {
-        if (!s) return false;
-        const sParent = s.parent;
-        if (sParent == null) return false;
-        if (typeof sParent === 'object') return (sParent.id === parent.id || sParent === parent.id);
-        return sParent === parent.id;
-      });
-      if (!student) { setLoading(false); return; }
-
-      const attResp = await fetch(`${BACKEND_URL}/api/attendance/?student=${student.id}`);
-      let attData = await attResp.json();
-      if (attData && attData.results) attData = attData.results;
-      if (!Array.isArray(attData)) attData = [];
-
-      // reuse shared builder so past months w/ no records are auto-marked absent
+      const attData = await fetchAttendanceRecords(kid);
       const map = buildMarkedForMonth(attData, year, month);
       setAttDataState(attData);
       setMarkedDates(map);
@@ -215,6 +238,24 @@ const Attendance = ({ navigation }) => {
           Attendance
         </Text>
       </View>
+
+      {/* Active child info */}
+      {activeKid ? (
+        <View style={[styles.childCard, { backgroundColor: isDark ? "#1e1e1e" : "#fff" }]}>
+          <Text style={[styles.childLabel, { color: isDark ? "#bbb" : "#666" }]}>
+            Showing attendance for
+          </Text>
+          <Text style={[styles.childName, { color: isDark ? "#fff" : "#333" }]}>
+            {activeKid.name}
+          </Text>
+        </View>
+      ) : !loading ? (
+        <View style={[styles.childCard, { backgroundColor: isDark ? "#1e1e1e" : "#fff" }]}>
+          <Text style={[styles.childLabel, { color: isDark ? "#bbb" : "#666" }]}>
+            No student record found for this account.
+          </Text>
+        </View>
+      ) : null}
 
       {/* Calendar */}
       <View
@@ -310,6 +351,25 @@ const styles = StyleSheet.create({
     height: 12,
     borderRadius: 6,
     marginRight: 6,
+  },
+  childCard: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: 16,
+    padding: 16,
+    elevation: 3,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  childLabel: {
+    fontSize: 14,
+  },
+  childName: {
+    fontSize: 20,
+    fontWeight: "700",
+    marginTop: 4,
   },
 });
 
