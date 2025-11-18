@@ -18,7 +18,7 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
-from parents.views import ParentNotificationListCreateView
+from parents.views import ParentNotificationListCreateView, ParentEventListCreateView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -26,6 +26,7 @@ urlpatterns = [
     path('api/guardian/', include('guardian.urls')),
     path('api/parents/', include('parents.urls')),  # ✅ ADD THIS
     path('api/notifications/', ParentNotificationListCreateView.as_view(), name='notifications'),
+    path('api/events/', ParentEventListCreateView.as_view(), name='events'),
 ]
 
 if settings.DEBUG:

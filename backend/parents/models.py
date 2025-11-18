@@ -100,3 +100,40 @@ class ParentNotification(models.Model):
         parent_name = self.parent.name if self.parent_id else 'Unknown'
         return f"Notification to {parent_name}: {self.type}"
 
+
+class ParentEvent(models.Model):
+    EVENT_TYPES = [
+        ('school', 'School'),
+        ('meeting', 'Meeting'),
+        ('reminder', 'Reminder'),
+        ('other', 'Other'),
+    ]
+
+    parent = models.ForeignKey(
+        ParentGuardian,
+        on_delete=models.CASCADE,
+        related_name='events'
+    )
+    student = models.ForeignKey(
+        Student,
+        on_delete=models.CASCADE,
+        related_name='events',
+        blank=True,
+        null=True
+    )
+    title = models.CharField(max_length=150)
+    description = models.TextField(blank=True)
+    event_type = models.CharField(max_length=32, choices=EVENT_TYPES, default='other')
+    scheduled_at = models.DateTimeField(blank=True, null=True)
+    location = models.CharField(max_length=150, blank=True)
+    extra_data = models.JSONField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-scheduled_at', '-created_at']
+
+    def __str__(self):
+        parent_name = self.parent.name if self.parent_id else 'Unknown'
+        return f"Event for {parent_name}: {self.title}"
+

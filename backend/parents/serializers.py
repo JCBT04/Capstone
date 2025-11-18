@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Student, ParentGuardian, ParentNotification
+from .models import Student, ParentGuardian, ParentNotification, ParentEvent
 from teacher.models import TeacherProfile
 
 
@@ -81,6 +81,37 @@ class ParentNotificationSerializer(serializers.ModelSerializer):
             'created_at',
         ]
         read_only_fields = ['created_at']
+
+    def create(self, validated_data):
+        if not validated_data.get('student'):
+            validated_data['student'] = validated_data['parent'].student
+        return super().create(validated_data)
+
+
+class ParentEventSerializer(serializers.ModelSerializer):
+    parent_name = serializers.CharField(source='parent.name', read_only=True)
+    student_name = serializers.CharField(source='student.name', read_only=True)
+    student_lrn = serializers.CharField(source='student.lrn', read_only=True)
+
+    class Meta:
+        model = ParentEvent
+        fields = [
+            'id',
+            'parent',
+            'parent_name',
+            'student',
+            'student_name',
+            'student_lrn',
+            'title',
+            'description',
+            'event_type',
+            'scheduled_at',
+            'location',
+            'extra_data',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['created_at', 'updated_at']
 
     def create(self, validated_data):
         if not validated_data.get('student'):

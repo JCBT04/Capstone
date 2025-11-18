@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Student, ParentGuardian, ParentNotification
+from .models import Student, ParentGuardian, ParentNotification, ParentEvent
 
 @admin.register(Student)
 class StudentAdmin(admin.ModelAdmin):
@@ -94,3 +94,19 @@ class ParentNotificationAdmin(admin.ModelAdmin):
     def message_preview(self, obj):
         return (obj.message[:50] + '...') if obj.message and len(obj.message) > 50 else obj.message
     message_preview.short_description = 'Message'
+
+
+@admin.register(ParentEvent)
+class ParentEventAdmin(admin.ModelAdmin):
+    list_display = ['id', 'parent', 'title', 'event_type', 'scheduled_at', 'created_at']
+    list_filter = ['event_type', 'scheduled_at', 'created_at']
+    search_fields = ['parent__name', 'parent__username', 'student__name', 'title', 'description']
+    readonly_fields = ['created_at', 'updated_at']
+    autocomplete_fields = ['parent', 'student']
+
+    fieldsets = (
+        ('Event Target', {'fields': ('parent', 'student')}),
+        ('Details', {'fields': ('title', 'description', 'event_type', 'scheduled_at', 'location')}),
+        ('Extra', {'fields': ('extra_data',)}),
+        ('System', {'fields': ('created_at', 'updated_at'), 'classes': ('collapse',)}),
+    )

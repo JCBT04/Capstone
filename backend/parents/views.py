@@ -2,13 +2,14 @@ import logging
 import json
 from django.db import transaction
 from django.db.models import Prefetch
+from django.utils import timezone
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
-from .models import Student, ParentGuardian, ParentNotification
+from .models import Student, ParentGuardian, ParentNotification, ParentEvent
 from teacher.models import TeacherProfile
 from .serializers import (
     StudentSerializer,
@@ -16,6 +17,7 @@ from .serializers import (
     RegistrationSerializer,
     TeacherStudentsSerializer,
     ParentNotificationSerializer,
+    ParentEventSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -427,7 +429,45 @@ class ParentNotificationListCreateView(APIView):
             return Response(output, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-# new
+
+class ParentEventListCreateView(APIView):
+    """
+    Read/create events tied to ParentGuardian records.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        parent_id = request.query_params.get('parent')
+        lrn = request.query_params.get('lrn')
+        limit = request.query_params.get('limit')
+        upcoming = request.query_params.get('upcoming')
+
+        queryset = ParentEvent.objects.select_related('parent', 'student').order_by('-scheduled_at', '-created_at')
+        if parent_id:
+            queryset = queryset.filter(parent_id=parent_id)
+        if lrn:
+            queryset = queryset.filter(student__lrn=lrn)
+        if upcoming and str(upcoming).lower() in ('1', 'true', 'yes'):
+            queryset = queryset.filter(scheduled_at__gte=timezone.now())
+        if limit:
+            try:
+                limit_value = max(1, min(int(limit), 200))
+                queryset = queryset[:limit_value]
+            except (TypeError, ValueError):
+                logger.warning("Invalid limit param for events: %s", limit)
+
+        serializer = ParentEventSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        serializer = ParentEventSerializer(data=request.data)
+        if serializer.is_valid():
+            event = serializer.save()
+            output = ParentEventSerializer(event).data
+            return Response(output, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
 class StudentDetailView(APIView):
     """
     Get details for a single student (must belong to authenticated teacher).

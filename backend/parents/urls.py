@@ -10,6 +10,7 @@ from .views import (
     ParentLoginView,
     ParentDetailView,
     ParentNotificationListCreateView,
+    ParentEventListCreateView,
 )
 
 urlpatterns = [
@@ -24,4 +25,5 @@ urlpatterns = [
     path('login/', ParentLoginView.as_view(), name='parent-login'),
     path('parents/<int:pk>/', ParentDetailView.as_view(), name='parent-detail'),
     path('notifications/', ParentNotificationListCreateView.as_view(), name='parent-notifications'),
+    path('events/', ParentEventListCreateView.as_view(), name='parent-events'),
 ]
