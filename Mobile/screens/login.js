@@ -30,7 +30,7 @@ const Login = ({ navigation }) => {
 
   const handleLogin = async () => {
     if (!username || !password) {
-      setErrorMessage("Please enter your username and password");
+      setErrorMessage("Please fill all credentials");
       return;
     }
 
@@ -71,8 +71,7 @@ const Login = ({ navigation }) => {
           console.warn('[Login] parent login attempt failed', e);
         }
 
-        const message = (json && (json.error || json.detail)) || `Login failed (status ${resp.status})`;
-        setErrorMessage(message);
+        setErrorMessage("Wrong username or password");
         setLoading(false);
         return;
       }
