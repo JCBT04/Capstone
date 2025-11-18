@@ -3,8 +3,25 @@ import dj_database_url
 from .settings import *
 from .settings import BASE_DIR
 
-ALLOWED_HOSTS = [os.environ.get('RENDER_EXTERNAL_HOSTNAME')]
-CSRF_TRUSTED_ORIGINS = ['https://'+os.environ.get('RENDER_EXTERNAL_HOSTNAME')]
+# Build ALLOWED_HOSTS and CSRF_TRUSTED_ORIGINS from environment variables.
+# Priority:
+# 1. `ALLOWED_HOSTS` env var (comma-separated)
+# 2. `RENDER_EXTERNAL_HOSTNAME` (set by Render)
+# 3. `RENDER_SERVICE_NAME` as a last resort
+env_allowed = os.environ.get('ALLOWED_HOSTS')
+render_host = os.environ.get('RENDER_EXTERNAL_HOSTNAME') or os.environ.get('RENDER_SERVICE_NAME')
+
+if env_allowed:
+    ALLOWED_HOSTS = [h.strip() for h in env_allowed.split(',') if h.strip()]
+else:
+    ALLOWED_HOSTS = [render_host] if render_host else []
+
+# CSRF trusted origins: accept an env var or derive from the render host
+env_csrf = os.environ.get('CSRF_TRUSTED_ORIGINS')
+if env_csrf:
+    CSRF_TRUSTED_ORIGINS = [h.strip() for h in env_csrf.split(',') if h.strip()]
+else:
+    CSRF_TRUSTED_ORIGINS = [f'https://{render_host}'] if render_host else []
 
 
 DEBUG = False
