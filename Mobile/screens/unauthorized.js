@@ -9,7 +9,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient"; // ✅ Gradient
 import { useTheme } from "../components/ThemeContext";
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BACKEND_URL } from "../config";
+
 
 const Unauthorized = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();

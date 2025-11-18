@@ -12,7 +12,8 @@ import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient'; // ✅ Added gradient
 import { useTheme } from '../components/ThemeContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BACKEND_URL } from "../config";
+
+const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
 
 // Import your logo
 import logo from '../assets/lg.png';
@@ -65,11 +66,49 @@ const Home = ({ navigation }) => {
           return;
         }
 
-        // first get parent list to find parent id by username
-        const parentsResp = await fetch(`${BACKEND_URL}/api/parent/`);
-        const parentsData = await parentsResp.json();
-        const parent = (Array.isArray(parentsData) ? parentsData : (parentsData && parentsData.results ? parentsData.results : [])).find(p => p.username === username);
-        if (!parent) {
+        const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
+
+        // Try to get stored parent data as fallback
+        let fallbackParentData = null;
+        try {
+          const storedParent = await AsyncStorage.getItem('parent');
+          if (storedParent) {
+            fallbackParentData = JSON.parse(storedParent);
+          }
+        } catch (e) {
+          console.warn('Failed to parse stored parent data', e);
+        }
+
+        // Fetch all parent records from API (parent might have multiple children)
+        let parentsList = [];
+        try {
+          // Try to get token for authenticated request
+          const token = await AsyncStorage.getItem('token');
+          const headers = { 'Content-Type': 'application/json' };
+          if (token) {
+            headers['Authorization'] = `Token ${token}`;
+          }
+
+          const parentsResp = await fetch(`${BACKEND_URL}/api/parents/parents/`, { headers });
+          if (!parentsResp.ok) {
+            throw new Error(`HTTP ${parentsResp.status}`);
+          }
+          const parentsData = await parentsResp.json();
+          parentsList = Array.isArray(parentsData) 
+            ? parentsData 
+            : (parentsData && parentsData.results ? parentsData.results : []);
+          // Filter all parent records for this username (parent might have multiple children)
+          parentsList = parentsList.filter(p => p.username === username);
+        } catch (e) {
+          console.warn('Failed to fetch parents from API, using stored data', e);
+          // If API fails, use stored parent data as fallback
+          if (fallbackParentData) {
+            parentsList = [fallbackParentData];
+          }
+        }
+
+        // If no parents found, return empty
+        if (parentsList.length === 0) {
           if (isMounted) {
             setChildNames([]);
             setLoadingChild(false);
@@ -77,61 +116,25 @@ const Home = ({ navigation }) => {
           return;
         }
 
-        // fetch students from the API students endpoint (admin URL returns HTML)
-        const studentsResp = await fetch(`${BACKEND_URL}/api/student/`);
-        // parse JSON bodies
-        let studentsData = await studentsResp.json();
-        // log both responses to help debugging (inspect shape in console)
-        console.log('parentsData:', parentsData);
-        console.log('studentsData:', studentsData);
+        // Build child data from all parent records (each parent record = one student)
+        // ParentGuardianSerializer includes: student_name, student_lrn, student_gender, teacher_name
+        const kids = parentsList
+          .filter(p => p.student_name) // Only include parents with student info
+          .map(p => ({
+            id: p.student_lrn || p.student || p.id,
+            name: p.student_name,
+            teacherName: p.teacher_name || '',
+            teacherPhone: p.contact_number || '',
+            attendanceStatus: null,
+          }));
 
-        // normalize students response: some DRF setups return { results: [...] }
-        if (studentsData && studentsData.results) studentsData = studentsData.results;
-        if (!Array.isArray(studentsData)) studentsData = [];
-
-        // fetch teachers and map by student id
-        let teachersData = [];
-          try {
-            const teachersResp = await fetch(`${BACKEND_URL}/api/teachers/`);
-          teachersData = await teachersResp.json();
-          if (teachersData && teachersData.results) teachersData = teachersData.results;
-          if (!Array.isArray(teachersData)) teachersData = [];
-        } catch (e) {
-          console.warn('Failed to load teachers', e);
-          teachersData = [];
+        if (kids.length === 0) {
+          if (isMounted) {
+            setChildNames([]);
+            setLoadingChild(false);
+          }
+          return;
         }
-
-        // build map studentId -> first teacher
-        const teacherMap = {};
-        teachersData.forEach(t => {
-          const sid = t.student || (t.student && t.student.id);
-          if (!sid) return;
-          if (!teacherMap[sid]) teacherMap[sid] = [];
-          teacherMap[sid].push(t);
-        });
-
-        // students may store `parent` as an id or as an object; handle both
-        // also extract teacher info if present on the student object
-        const kids = studentsData
-          .filter(s => {
-            if (!s) return false;
-            const sParent = s.parent;
-            if (sParent == null) return false;
-            if (typeof sParent === 'object') return (sParent.id === parent.id || sParent === parent.id);
-            return sParent === parent.id;
-          })
-          .map(s => {
-            const sid = s.id;
-            const teachersForStudent = teacherMap[sid] || [];
-            const firstTeacher = teachersForStudent.length ? teachersForStudent[0] : null;
-            return {
-              id: sid,
-              name: s.name || 'Unknown',
-              teacherName: firstTeacher ? (firstTeacher.name || '') : (s.teacher_name || s.teacher || ''),
-              teacherPhone: firstTeacher ? (firstTeacher.phone || '') : (s.teacher_phone || s.teacher_phone_number || s.teacherPhone || ''),
-              attendanceStatus: null,
-            };
-          });
 
         // Fetch today's attendance for each kid and attach status
         try {
@@ -150,19 +153,29 @@ const Home = ({ navigation }) => {
           } else {
             const kidsWithStatus = await Promise.all(kids.map(async (kid) => {
               try {
-                const aResp = await fetch(`${BACKEND_URL}/api/attendance/?student=${kid.id}&date=${todayStr}`);
+                // Attendance API filters by student name (partial match) and date
+                // Include token if available for authenticated requests
+                const token = await AsyncStorage.getItem('token');
+                const headers = { 'Content-Type': 'application/json' };
+                if (token) {
+                  headers['Authorization'] = `Token ${token}`;
+                }
+                const aResp = await fetch(`${BACKEND_URL}/api/attendance/?student=${encodeURIComponent(kid.name)}&date=${todayStr}`, { headers });
                 let aData = await aResp.json();
                 if (aData && aData.results) aData = aData.results;
                 if (!Array.isArray(aData)) aData = [];
-                if (aData.length > 0) {
+                // Filter to find exact match for today's date
+                const todayAttendance = aData.filter(a => a.date === todayStr);
+                if (todayAttendance.length > 0) {
                   // take the first record for today
-                  const st = aData[0].status || 'present';
+                  // Normalize status: API returns 'Present', 'Absent', etc., UI expects lowercase
+                  const st = (todayAttendance[0].status || 'Present').toLowerCase();
                   return { ...kid, attendanceStatus: st };
                 }
                 // no record for today -> treat as absent
                 return { ...kid, attendanceStatus: 'absent' };
               } catch (e) {
-                console.warn('Failed fetching attendance for', kid.id, e);
+                console.warn('Failed fetching attendance for', kid.name, e);
                 // On individual fetch failure, treat as absent to match desired behavior
                 return { ...kid, attendanceStatus: 'absent' };
               }

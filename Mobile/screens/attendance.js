@@ -5,7 +5,7 @@ import { Calendar } from "react-native-calendars";
 import { LinearGradient } from "expo-linear-gradient"; // ✅ Added gradient
 import { useTheme } from "../components/ThemeContext";
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BACKEND_URL } from "../config";
+
 
 const Attendance = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();

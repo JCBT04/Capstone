@@ -10,7 +10,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient"; // ✅ Added gradient
 import { useTheme } from "../components/ThemeContext";
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BACKEND_URL } from "../config";
+
 
 const Schedule = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();
