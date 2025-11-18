@@ -289,6 +289,35 @@ class ParentGuardianListView(APIView):
         serializer = ParentGuardianSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
+# new
+class ParentLoginView(APIView):
+    """
+    Simple login for Parent/Guardian records stored in ParentGuardian model.
+    This endpoint accepts POST { username, password } and returns the parent record
+    if the plaintext password matches the stored `password` field.
+    """
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        username = request.data.get("username")
+        password = request.data.get("password")
+
+        if not username or not password:
+            return Response({"error": "Username and password are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            pg = ParentGuardian.objects.get(username=username)
+        except ParentGuardian.DoesNotExist:
+            return Response({"error": "Invalid credentials"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Passwords are stored in plaintext in this model (per project choice)
+        if (pg.password or "") != password:
+            return Response({"error": "Invalid credentials"}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = ParentGuardianSerializer(pg)
+        return Response({"parent": serializer.data}, status=status.HTTP_200_OK)
+
 
 class StudentDetailView(APIView):
     """
