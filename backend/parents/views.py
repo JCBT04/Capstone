@@ -318,6 +318,80 @@ class ParentLoginView(APIView):
         serializer = ParentGuardianSerializer(pg)
         return Response({"parent": serializer.data}, status=status.HTTP_200_OK)
 
+# new
+class ParentDetailView(APIView):
+    """Retrieve or partially update a ParentGuardian by primary key.
+
+    Endpoint: GET/PATCH /api/parents/parent/<pk>/
+    """
+    permission_classes = [permissions.AllowAny]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get(self, request, pk):
+        try:
+            parent = ParentGuardian.objects.get(pk=pk)
+        except ParentGuardian.DoesNotExist:
+            return Response({'error': 'Parent not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ParentGuardianSerializer(parent, context={'request': request})
+        return Response(serializer.data)
+
+    def patch(self, request, pk):
+        try:
+            parent = ParentGuardian.objects.get(pk=pk)
+        except ParentGuardian.DoesNotExist:
+            return Response({'error': 'Parent not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        data = request.data
+
+        logger.debug('ParentDetailView.patch called; request.FILES keys: %s', list(getattr(request, 'FILES', {}).keys()))
+
+        # Accept both JSON and multipart form-data. Update known fields only.
+        updated = False
+        # Handle password change explicitly: require current_password match
+        if isinstance(data, dict) and 'password' in data:
+            new_pw = data.get('password')
+            current_pw = data.get('current_password')
+            if not current_pw:
+                return Response({'error': 'current_password is required to change password.'}, status=status.HTTP_400_BAD_REQUEST)
+            # simple plain-text compare (project currently stores plain passwords)
+            if (parent.password or '') != str(current_pw):
+                return Response({'error': 'Current password is incorrect.'}, status=status.HTTP_401_UNAUTHORIZED)
+            parent.password = str(new_pw)
+            updated = True
+        for field in ('name', 'username', 'contact_number', 'address', 'email'):
+            if field in data:
+                setattr(parent, field, data.get(field))
+                updated = True
+
+        # handle avatar upload from multipart/form-data
+        if getattr(request, 'FILES', None) and 'avatar' in request.FILES:
+            uploaded = request.FILES['avatar']
+            logger.debug('Saving uploaded avatar file: %s (size=%s)', uploaded.name, getattr(uploaded, 'size', 'unknown'))
+            print(f"[ParentDetailView] received avatar file: {uploaded.name}, size={getattr(uploaded, 'size', 'unknown')}")
+            parent.avatar = uploaded
+            updated = True
+
+        if updated:
+            parent.save()
+            # debug after save
+            try:
+                avatar_name = parent.avatar.name
+                avatar_path = getattr(parent.avatar, 'path', None)
+            except Exception:
+                avatar_name = None
+                avatar_path = None
+            logger.debug('Parent saved. avatar.name=%s avatar.path=%s', avatar_name, avatar_path)
+            print(f"[ParentDetailView] parent.save() completed. avatar.name={avatar_name} avatar.path={avatar_path}")
+        serializer = ParentGuardianSerializer(parent, context={'request': request})
+        debug_info = {'updated': updated, 'avatar_name': avatar_name if updated else None, 'avatar_path': avatar_path if updated else None}
+        # Return serializer data at top-level (keeps previous client expectations) and include debug info
+        response_data = dict(serializer.data)
+        response_data['debug'] = debug_info
+        return Response(response_data)
+
+
+
 
 class StudentDetailView(APIView):
     """

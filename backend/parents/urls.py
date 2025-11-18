@@ -20,4 +20,6 @@ urlpatterns = [
     path('all-teachers-students/', AllTeachersStudentsView.as_view(), name='all-teachers-students'),
      #new
     path('login/', ParentLoginView.as_view(), name='parent-login'),
+    path('parents/<int:pk>/', ParentGuardianDetailView.as_view(), name='parent-detail'),
+
 ]
