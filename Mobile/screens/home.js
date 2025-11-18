@@ -12,6 +12,7 @@ import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient'; // ✅ Added gradient
 import { useTheme } from '../components/ThemeContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useIsFocused } from '@react-navigation/native';
 
 const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
 
@@ -20,6 +21,7 @@ import logo from '../assets/lg.png';
 
 const Home = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();
+  const isFocused = useIsFocused();
   const isDark = darkModeEnabled;
   const [childNames, setChildNames] = useState([]);
   const [loadingChild, setLoadingChild] = useState(true);
@@ -53,6 +55,7 @@ const Home = ({ navigation }) => {
     ];
 
   useEffect(() => {
+    if (!isFocused) return;
     let isMounted = true;
 
     const loadChild = async () => {
@@ -122,10 +125,12 @@ const Home = ({ navigation }) => {
           .filter(p => p.student_name) // Only include parents with student info
           .map(p => ({
             id: p.student_lrn || p.student || p.id,
+            lrn: p.student_lrn || '',
             name: p.student_name,
             teacherName: p.teacher_name || '',
             teacherPhone: p.contact_number || '',
             attendanceStatus: null,
+            attendanceStatusLabel: null,
           }));
 
         if (kids.length === 0) {
@@ -136,6 +141,27 @@ const Home = ({ navigation }) => {
           return;
         }
 
+        const fetchPublicAttendance = async () => {
+          const resp = await fetch(`${BACKEND_URL}/api/attendance/public/`);
+          if (!resp.ok) {
+            throw new Error(`Attendance HTTP ${resp.status}`);
+          }
+          let data = await resp.json();
+          if (data && data.results) data = data.results;
+          if (!Array.isArray(data)) data = [];
+          return data;
+        };
+
+        const matchesKidRecord = (record, kid) => {
+          const recName = (record.student_name || '').trim().toLowerCase();
+          const recLrn = (record.student_lrn || '').trim();
+          const kidName = (kid.name || '').trim().toLowerCase();
+          const kidLrn = (kid.lrn || '').trim();
+          const matchesName = kidName && recName === kidName;
+          const matchesLrn = kidLrn && recLrn && recLrn === kidLrn;
+          return matchesName || matchesLrn;
+        };
+
         // Fetch today's attendance for each kid and attach status
         try {
           const today = new Date();
@@ -145,39 +171,36 @@ const Home = ({ navigation }) => {
 
           if (isWeekend) {
             // On weekends, show 'weekend' instead of present/absent and skip API calls
-            const kidsWithStatus = kids.map(k => ({ ...k, attendanceStatus: 'weekend' }));
+            const kidsWithStatus = kids.map(k => ({ ...k, attendanceStatus: 'weekend', attendanceStatusLabel: 'No Class' }));
             if (isMounted) {
               setChildNames(kidsWithStatus);
               setLoadingChild(false);
             }
           } else {
+            let attendanceData = [];
+            try {
+              attendanceData = await fetchPublicAttendance();
+            } catch (err) {
+              console.warn('Failed fetching public attendance list', err);
+              attendanceData = [];
+            }
+
             const kidsWithStatus = await Promise.all(kids.map(async (kid) => {
               try {
-                // Attendance API filters by student name (partial match) and date
-                // Include token if available for authenticated requests
-                const token = await AsyncStorage.getItem('token');
-                const headers = { 'Content-Type': 'application/json' };
-                if (token) {
-                  headers['Authorization'] = `Token ${token}`;
-                }
-                const aResp = await fetch(`${BACKEND_URL}/api/attendance/?student=${encodeURIComponent(kid.name)}&date=${todayStr}`, { headers });
-                let aData = await aResp.json();
-                if (aData && aData.results) aData = aData.results;
-                if (!Array.isArray(aData)) aData = [];
-                // Filter to find exact match for today's date
-                const todayAttendance = aData.filter(a => a.date === todayStr);
-                if (todayAttendance.length > 0) {
-                  // take the first record for today
-                  // Normalize status: API returns 'Present', 'Absent', etc., UI expects lowercase
-                  const st = (todayAttendance[0].status || 'Present').toLowerCase();
-                  return { ...kid, attendanceStatus: st };
+                const todayAttendance = attendanceData.find(
+                  (record) => record.date === todayStr && matchesKidRecord(record, kid)
+                );
+                if (todayAttendance) {
+                  const rawStatus = (todayAttendance.status || 'Present').trim();
+                  const normalizedStatus = rawStatus.toLowerCase();
+                  return { ...kid, attendanceStatus: normalizedStatus, attendanceStatusLabel: rawStatus };
                 }
                 // no record for today -> treat as absent
-                return { ...kid, attendanceStatus: 'absent' };
+                return { ...kid, attendanceStatus: 'absent', attendanceStatusLabel: 'Absent' };
               } catch (e) {
                 console.warn('Failed fetching attendance for', kid.name, e);
                 // On individual fetch failure, treat as absent to match desired behavior
-                return { ...kid, attendanceStatus: 'absent' };
+                return { ...kid, attendanceStatus: 'absent', attendanceStatusLabel: 'Absent' };
               }
             }));
             if (isMounted) {
@@ -189,7 +212,7 @@ const Home = ({ navigation }) => {
           console.warn('Failed to fetch attendance statuses', e);
           if (isMounted) {
             // If the attendance-status fetch as a whole failed, mark kids as absent
-            const absentKids = kids.map(k => ({ ...k, attendanceStatus: 'absent' }));
+            const absentKids = kids.map(k => ({ ...k, attendanceStatus: 'absent', attendanceStatusLabel: 'Absent' }));
             setChildNames(absentKids);
             setLoadingChild(false);
           }
@@ -207,7 +230,7 @@ const Home = ({ navigation }) => {
     loadChild();
 
     return () => { isMounted = false };
-  }, []);
+  }, [isFocused]);
 
   return (
     <LinearGradient
@@ -252,10 +275,11 @@ const Home = ({ navigation }) => {
                                   { backgroundColor: '#95a5a6' }
                                 ]}>
                                   <Text style={styles.statusText}>
-                                    {c.attendanceStatus === 'present' ? 'Present' :
-                                     c.attendanceStatus === 'absent' ? 'Absent' :
-                                     c.attendanceStatus === 'weekend' ? 'No Class' :
-                                     'No record'}
+                                    {c.attendanceStatusLabel ||
+                                      (c.attendanceStatus === 'present' ? 'Present' :
+                                        c.attendanceStatus === 'absent' ? 'Absent' :
+                                        c.attendanceStatus === 'weekend' ? 'No Class' :
+                                        'No record')}
                                   </Text>
                                 </View>
                               </View>

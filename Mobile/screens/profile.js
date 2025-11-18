@@ -13,8 +13,11 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useTheme } from "../components/ThemeContext";
 
+const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
+const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 
 const Profile = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();
@@ -30,37 +33,78 @@ const Profile = ({ navigation }) => {
     image: null,
   });
 
-  // Backend base URL for Parent API (from central config)
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let mounted = true;
 
-    const fetchParent = async () => {
-      try {
-        const res = await fetch(`${BACKEND_URL}/api/parent/`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!mounted) return;
-        // use first parent returned (adjust as needed to select specific parent)
-        if (Array.isArray(data) && data.length > 0) {
-          const p = data[0];
-          // map avatar to a full URL if needed
-          const avatarUrl = p.avatar
-            ? (p.avatar.startsWith('http') ? p.avatar : `${BACKEND_URL}${p.avatar}`)
-            : null;
+    const fetchParentsForUsername = async (username) => {
+      const token = await AsyncStorage.getItem("token");
+      const headers = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Token ${token}`;
 
-          setProfile((prev) => ({
-            ...prev,
-            id: p.id || prev.id,
-            name: p.name || prev.name,
-            address: p.address || prev.address,
-            username: p.username || prev.username,
-            phone: p.phone || prev.phone,
-            image: avatarUrl || prev.image,
-          }));
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/parents/parents/`, { headers });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        let parents = Array.isArray(data) ? data : (data && data.results ? data.results : []);
+        parents = parents.filter((p) => p.username === username);
+        if (parents.length) {
+          await AsyncStorage.setItem("parent", JSON.stringify(parents[0]));
+          return parents;
         }
       } catch (err) {
-        console.warn('Failed to load parent profile:', err.message || err);
+        console.warn("[Profile] Failed to fetch parents from API:", err?.message || err);
+      }
+
+      try {
+        const storedParent = await AsyncStorage.getItem("parent");
+        if (storedParent) {
+          const parsed = JSON.parse(storedParent);
+          if (parsed && parsed.username === username) {
+            return [parsed];
+          }
+        }
+      } catch (err) {
+        console.warn("[Profile] Failed to read cached parent:", err?.message || err);
+      }
+
+      return [];
+    };
+
+    const fetchParent = async () => {
+      try {
+        const username = await AsyncStorage.getItem("username");
+        if (!username) {
+          if (mounted) setLoading(false);
+          return;
+        }
+
+        const parents = await fetchParentsForUsername(username);
+        if (!mounted) return;
+        if (!parents.length) {
+          setLoading(false);
+          return;
+        }
+
+        const p = parents[0];
+        const avatarUrl = p.avatar
+          ? (p.avatar.startsWith("http") ? p.avatar : `${BACKEND_URL}${p.avatar}`)
+          : null;
+
+        setProfile((prev) => ({
+          ...prev,
+          id: p.id || prev.id,
+          name: p.name || prev.name,
+          address: p.address || prev.address,
+          username: p.username || prev.username,
+          phone: p.contact_number || prev.phone,
+          image: avatarUrl || prev.image,
+        }));
+        setLoading(false);
+      } catch (err) {
+        console.warn("Failed to load parent profile:", err.message || err);
+        if (mounted) setLoading(false);
       }
     };
 
@@ -164,12 +208,14 @@ const Profile = ({ navigation }) => {
 
           <View style={[styles.infoItem, { backgroundColor: isDark ? "#1e1e1e" : "#fff" }]}>
             <Ionicons name="call-outline" size={22} color="#27ae60" />
-            <Text style={[styles.infoText, { color: isDark ? "#fff" : "#333" }]}>{profile.phone}</Text>
+          <Text style={[styles.infoText, { color: isDark ? "#fff" : "#333" }]}>Contact: {profile.phone || "No contact number"}
+          </Text>
           </View>
 
           <View style={[styles.infoItem, { backgroundColor: isDark ? "#1e1e1e" : "#fff" }]}>
             <Ionicons name="home-outline" size={22} color="#2980b9" />
-            <Text style={[styles.infoText, { color: isDark ? "#fff" : "#333" }]}>{profile.address}</Text>
+          <Text style={[styles.infoText, { color: isDark ? "#fff" : "#333" }]}>Address: {profile.address || "No address provided"}
+          </Text>
           </View>
         </View>
 
@@ -253,88 +299,116 @@ const Profile = ({ navigation }) => {
                 title={saving ? "Saving..." : "Save"}
                 onPress={async () => {
                   if (saving) return;
+                  if (!profile.id) {
+                    console.warn("No parent id available to save");
+                    return;
+                  }
+
                   setSaving(true);
-                  try {
-                    if (!profile.id) {
-                      console.warn('No parent id available to save');
-                    } else {
-                      // If there's a local image URI (not an already uploaded HTTP URL), send multipart/form-data
-                      const isLocalImage = profile.image && !profile.image.startsWith('http');
+                  const token = await AsyncStorage.getItem("token");
+                  const endpoints = [
+                    `${BACKEND_URL}/api/parent/${profile.id}/`,
+                    `${BACKEND_URL}/api/parents/parents/${profile.id}/`,
+                  ];
 
-                      if (isLocalImage) {
-                        const formData = new FormData();
-                        formData.append('name', profile.name || '');
-                        formData.append('username', profile.username || '');
-                        formData.append('phone', profile.phone || '');
-                        formData.append('address', profile.address || '');
+                  const PATCH_JSON_HEADERS = {
+                    "Content-Type": "application/json",
+                    ...(token ? { Authorization: `Token ${token}` } : {}),
+                  };
+                  const PATCH_FORM_HEADERS = {
+                    Accept: "application/json",
+                    ...(token ? { Authorization: `Token ${token}` } : {}),
+                  };
 
-                        // derive filename and mime type
-                        const uri = profile.image;
-                        const uriParts = uri.split('/');
-                        let name = uriParts[uriParts.length - 1];
-                        if (!name.includes('.')) {
-                          // fallback name
-                          name = `avatar.jpg`;
-                        }
-                        let match = name.match(/\.([0-9a-zA-Z]+)(?:\?|$)/);
-                        let type = 'image/jpeg';
-                        if (match) {
-                          const ext = match[1].toLowerCase();
-                          if (ext === 'png') type = 'image/png';
-                          else if (ext === 'jpg' || ext === 'jpeg') type = 'image/jpeg';
-                          else if (ext === 'heic') type = 'image/heic';
-                        }
+                  const updateLocalState = async (updated) => {
+                    const avatarUrl = updated.avatar
+                      ? (updated.avatar.startsWith("http") ? updated.avatar : `${BACKEND_URL}${updated.avatar}`)
+                      : null;
+                    const normalized = {
+                      ...updated,
+                      contact_number: updated.contact_number ?? updated.phone ?? profile.phone,
+                      address: updated.address ?? profile.address,
+                      name: updated.name ?? profile.name,
+                      username: updated.username ?? profile.username,
+                    };
+                    setProfile((prev) => ({
+                      ...prev,
+                      ...normalized,
+                      phone: normalized.contact_number,
+                      image: avatarUrl || prev.image,
+                    }));
+                    try {
+                      await AsyncStorage.setItem("parent", JSON.stringify(normalized));
+                    } catch (err) {
+                      console.warn("[Profile] Failed to cache parent:", err?.message || err);
+                    }
+                    setModalVisible(false);
+                  };
 
-                        formData.append('avatar', { uri, name, type });
-
-                        const res = await fetch(`${BACKEND_URL}/api/parent/${profile.id}/`, {
-                          method: 'PATCH',
-                          headers: {
-                            Accept: 'application/json',
-                          },
-                          body: formData,
-                        });
-
-                        if (!res.ok) {
-                          const text = await res.text();
-                          console.warn('Failed to save profile (multipart):', res.status, text);
-                        } else {
+                  const attemptRequests = async (optionsBuilder) => {
+                    for (const endpoint of endpoints) {
+                      try {
+                        const res = await fetch(endpoint, optionsBuilder(endpoint));
+                        if (res.ok) {
                           const updated = await res.json();
-                          // ensure avatar is full URL
-                          const avatarUrl = updated.avatar
-                            ? (updated.avatar.startsWith('http') ? updated.avatar : `${BACKEND_URL}${updated.avatar}`)
-                            : null;
-                          setProfile((prev) => ({ ...prev, ...updated, image: avatarUrl || prev.image }));
-                          setModalVisible(false);
+                          await updateLocalState(updated);
+                          return true;
                         }
-                      } else {
-                        // no local image: send JSON patch
-                        const payload = {
-                          name: profile.name,
-                          username: profile.username,
-                          phone: profile.phone,
-                          address: profile.address,
-                        };
-                        const res = await fetch(`${BACKEND_URL}/api/parent/${profile.id}/`, {
-                          method: 'PATCH',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify(payload),
-                        });
-                        if (!res.ok) {
-                          const text = await res.text();
-                          console.warn('Failed to save profile:', res.status, text);
-                        } else {
-                          const updated = await res.json();
-                          const avatarUrl = updated.avatar
-                            ? (updated.avatar.startsWith('http') ? updated.avatar : `${BACKEND_URL}${updated.avatar}`)
-                            : null;
-                          setProfile((prev) => ({ ...prev, ...updated, image: avatarUrl || prev.image }));
-                          setModalVisible(false);
-                        }
+                        const text = await res.text();
+                        console.warn(`[Profile] Save failed for ${endpoint}:`, res.status, text);
+                      } catch (err) {
+                        console.warn(`[Profile] Error saving to ${endpoint}:`, err?.message || err);
                       }
                     }
+                    return false;
+                  };
+
+                  try {
+                    const isLocalImage = profile.image && !profile.image.startsWith("http");
+                    const basePayload = {
+                      name: profile.name || "",
+                      username: profile.username || "",
+                      contact_number: profile.phone || "",
+                      address: profile.address || "",
+                    };
+
+                    let success = false;
+                    if (isLocalImage) {
+                      const formData = new FormData();
+                      Object.entries(basePayload).forEach(([key, value]) => formData.append(key, value));
+
+                      const uri = profile.image;
+                      const uriParts = uri.split("/");
+                      let filename = uriParts[uriParts.length - 1];
+                      if (!filename.includes(".")) filename = "avatar.jpg";
+                      let mime = "image/jpeg";
+                      const match = filename.match(/\.([0-9a-zA-Z]+)(?:\?|$)/);
+                      if (match) {
+                        const ext = match[1].toLowerCase();
+                        if (ext === "png") mime = "image/png";
+                        else if (ext === "heic") mime = "image/heic";
+                      }
+                      formData.append("avatar", { uri, name: filename, type: mime });
+
+                      success = await attemptRequests(() => ({
+                        method: "PATCH",
+                        headers: PATCH_FORM_HEADERS,
+                        body: formData,
+                      }));
+                    } else {
+                      const payload = { ...basePayload };
+                      success = await attemptRequests(() => ({
+                        method: "PATCH",
+                        headers: PATCH_JSON_HEADERS,
+                        body: JSON.stringify(payload),
+                      }));
+                    }
+
+                    if (!success) {
+                      alert("Failed to save profile. Please try again later.");
+                    }
                   } catch (err) {
-                    console.warn('Error saving profile:', err.message || err);
+                    console.warn("Error saving profile:", err.message || err);
                   } finally {
                     setSaving(false);
                   }
