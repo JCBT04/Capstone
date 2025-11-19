@@ -414,7 +414,8 @@ class ParentDetailView(APIView):
 
         # Handle password change explicitly: require current_password match
         changed_password = False
-        if isinstance(data, dict) and 'password' in data:
+        # request.data may be a QueryDict (not a plain dict), so don't rely on isinstance(data, dict)
+        if 'password' in data:
             new_pw = data.get('password')
             current_pw = data.get('current_password')
             if not current_pw:
