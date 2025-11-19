@@ -9,7 +9,10 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../components/ThemeContext";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
+const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
+const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 
 const Events = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();
@@ -57,10 +60,17 @@ const Events = ({ navigation }) => {
 
     const loadEvents = async () => {
       try {
-        // Use API endpoint (don't use admin URL — it returns HTML)
-        const resp = await fetch(`${BACKEND_URL}/api/event/`);
+        // Build headers (token optional)
+        const token = await AsyncStorage.getItem("token");
+        const headers = { "Content-Type": "application/json" };
+        if (token) headers.Authorization = `Token ${token}`;
+
+        // Prefer parent events endpoint exposed for Render deployment
+        const resp = await fetch(`${BACKEND_URL}/api/parents/events/`, { headers });
+        if (!resp.ok) {
+          throw new Error(`Events HTTP ${resp.status}`);
+        }
         const respData = await resp.json();
-        console.log('events resp:', respData);
 
         let data = respData;
         // handle paginated DRF responses
@@ -73,7 +83,7 @@ const Events = ({ navigation }) => {
               data.map((e, ix) => ({
                 id: e.id ? String(e.id) : String(ix + 1),
                 title: e.title || e.name || 'Event',
-                date: e.date || e.start_date || '',
+                date: e.date || e.start_date || e.scheduled_at || '',
                 description: e.description || '',
                 icon: e.icon || 'calendar',
                 color: pickColor(e.id || e.title || ix),
