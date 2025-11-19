@@ -7,6 +7,7 @@ from .models import Guardian
 from .serializers import GuardianSerializer
 import base64
 from django.core.files.base import ContentFile
+from django.db.models import Q
 
 class GuardianView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -240,6 +241,40 @@ class GuardianView(APIView):
                 {"error": f"Error deleting guardian: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class GuardianPublicListView(APIView):
+    """
+    Lightweight read-only endpoint so parents/mobile clients can view pending guardians.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        teacher_id = request.query_params.get('teacher')
+        student_name = request.query_params.get('student_name')
+        search = request.query_params.get('search')
+        limit = request.query_params.get('limit')
+
+        queryset = Guardian.objects.all().order_by('-timestamp')
+        if teacher_id:
+            queryset = queryset.filter(teacher_id=teacher_id)
+        if student_name:
+            queryset = queryset.filter(student_name__iexact=student_name)
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search)
+                | Q(student_name__icontains=search)
+                | Q(relationship__icontains=search)
+            )
+        if limit:
+            try:
+                limit_value = max(1, min(int(limit), 500))
+                queryset = queryset[:limit_value]
+            except (TypeError, ValueError):
+                pass
+
+        serializer = GuardianSerializer(queryset, many=True, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class GuardianByTeacherView(APIView):
