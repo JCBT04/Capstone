@@ -418,14 +418,22 @@ class ParentDetailView(APIView):
         if 'password' in data:
             new_pw = data.get('password')
             current_pw = data.get('current_password')
-            if not current_pw:
-                return Response({'error': 'current_password is required to change password.'}, status=status.HTTP_400_BAD_REQUEST)
-            # simple plain-text compare (project currently stores plain passwords)
-            if (parent.password or '') != str(current_pw):
-                return Response({'error': 'Current password is incorrect.'}, status=status.HTTP_401_UNAUTHORIZED)
-            parent.password = str(new_pw)
-            updated = True
-            changed_password = True
+            # If this parent record is flagged as requiring credential change on first login,
+            # allow changing the password without providing the current_password. This supports
+            # the mobile first-login flow where temporary credentials were auto-generated.
+            if orig_must:
+                parent.password = str(new_pw)
+                updated = True
+                changed_password = True
+            else:
+                if not current_pw:
+                    return Response({'error': 'current_password is required to change password.'}, status=status.HTTP_400_BAD_REQUEST)
+                # simple plain-text compare (project currently stores plain passwords)
+                if (parent.password or '') != str(current_pw):
+                    return Response({'error': 'Current password is incorrect.'}, status=status.HTTP_401_UNAUTHORIZED)
+                parent.password = str(new_pw)
+                updated = True
+                changed_password = True
 
         changed_username = False
         for field in ('name', 'username', 'contact_number', 'address', 'email'):
