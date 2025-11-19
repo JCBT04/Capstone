@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert } from "react-native";
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert, RefreshControl } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient"; 
 import { useTheme } from "../components/ThemeContext";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
+const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com";
 const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 const PARENTS_ENDPOINT = `${BACKEND_URL}/api/parents/parents/`;
 const ALL_TEACHERS_ENDPOINT = `${BACKEND_URL}/api/parents/all-teachers-students/`;
@@ -20,6 +20,7 @@ const Unregistered = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [processingId, setProcessingId] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const extractParentsFromTeachers = (payload) => {
     const teachersArray = Array.isArray(payload)
@@ -107,75 +108,94 @@ const Unregistered = ({ navigation }) => {
     return set;
   };
 
-  useEffect(() => {
+  const loadUnregistered = async ({ skipLoading = false } = {}) => {
     let isMounted = true;
-
-    const fetchGuardians = async (endpoint, headers = {}) => {
-      const resp = await fetch(endpoint, { headers });
-      if (!resp.ok) {
-        throw new Error(`Guardian HTTP ${resp.status}`);
-      }
-      const payload = await resp.json();
-      if (Array.isArray(payload)) return payload;
-      if (payload && Array.isArray(payload.results)) return payload.results;
-      return [];
-    };
-
-    const loadUnregistered = async () => {
+    if (!skipLoading) {
       setLoading(true);
       setError(null);
-      try {
-        const token = await AsyncStorage.getItem('token');
-        const parentRecords = await fetchParentRecords();
-        const studentNamesSet = buildStudentNamesSet(parentRecords);
+    }
+    try {
+      const token = await AsyncStorage.getItem('token');
+      const parentRecords = await fetchParentRecords();
+      const studentNamesSet = buildStudentNamesSet(parentRecords);
 
-        let guardians = [];
-        if (token) {
-          const headers = {
+      let guardians = [];
+      const endpointChain = [];
+      if (token) {
+        endpointChain.push({
+          url: GUARDIAN_ENDPOINT,
+          headers: {
             "Content-Type": "application/json",
             Authorization: `Token ${token}`,
-          };
-          try {
-            guardians = await fetchGuardians(GUARDIAN_ENDPOINT, headers);
-          } catch (secureErr) {
-            console.warn("[Unregistered] authenticated guardian fetch failed", secureErr);
+          },
+        });
+      }
+      endpointChain.push({
+        url: GUARDIAN_PUBLIC_ENDPOINT,
+        headers: { "Content-Type": "application/json" },
+      });
+
+      let lastError = null;
+      for (const entry of endpointChain) {
+        try {
+          const resp = await fetch(entry.url, { headers: entry.headers });
+          if (!resp.ok) throw new Error(`Guardian HTTP ${resp.status}`);
+          let payload = await resp.json();
+          if (Array.isArray(payload)) {
+            guardians = payload;
+          } else if (payload && Array.isArray(payload.results)) {
+            guardians = payload.results;
+          } else {
+            guardians = [];
           }
-        }
-
-        if (!guardians.length) {
-          guardians = await fetchGuardians(GUARDIAN_PUBLIC_ENDPOINT);
-        }
-
-        const mapped = guardians
-          .filter((g) => g && guardianMatchesStudent(g, studentNamesSet))
-          .map((g) => ({
-            id: g.id,
-            name: g.name || "Unnamed Guardian",
-            relation: g.relationship || "Guardian",
-            studentName: g.student_name || "Unknown student",
-            reason: g.contact ? `Contact: ${g.contact}` : "Awaiting approval",
-          }));
-
-        if (isMounted) {
-          setUnregisteredList(mapped);
-          setError(mapped.length ? null : "No unregistered guardians.");
-        }
-      } catch (err) {
-        console.warn("Failed loading guardians", err);
-        if (isMounted) {
-          setError(err.message || "Failed to load guardians");
-          setUnregisteredList([]);
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false);
+          break;
+        } catch (fetchErr) {
+          lastError = fetchErr;
+          guardians = [];
         }
       }
-    };
 
-    loadUnregistered();
-    return () => { isMounted = false };
+      if (!guardians.length && lastError) {
+        throw lastError;
+      }
+
+      const mapped = guardians
+        .filter((g) => g && guardianMatchesStudent(g, studentNamesSet))
+        .map((g) => ({
+          id: g.id,
+          name: g.name || "Unnamed Guardian",
+          relation: g.relationship || "Guardian",
+          studentName: g.student_name || "Unknown student",
+          reason: g.contact ? `Contact: ${g.contact}` : "Awaiting approval",
+        }));
+
+      setUnregisteredList(mapped);
+      setError(mapped.length ? null : "No unregistered guardians.");
+    } catch (err) {
+      console.warn("Failed loading guardians", err);
+      setError(err.message || "Failed to load guardians");
+      setUnregisteredList([]);
+    } finally {
+      if (isMounted) {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      await loadUnregistered();
+      mounted = false;
+    })();
+    return () => { mounted = false };
   }, []);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadUnregistered({ skipLoading: true });
+  };
 
   const performGuardianAction = async (guardianId, { method = "DELETE", body } = {}) => {
     const token = await AsyncStorage.getItem('token');
@@ -323,6 +343,15 @@ const Unregistered = ({ navigation }) => {
               </Text>
             </View>
           )}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={isDark ? '#fff' : '#333'}
+              colors={[isDark ? '#fff' : '#333']}
+              progressBackgroundColor={isDark ? '#111' : '#fff'}
+            />
+          }
         />
       )}
     </LinearGradient>

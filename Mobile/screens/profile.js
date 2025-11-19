@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   TextInput,
   Button,
   ScrollView,
+  RefreshControl,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -16,7 +17,7 @@ import * as ImagePicker from "expo-image-picker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useTheme } from "../components/ThemeContext";
 
-const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
+const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com";
 const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 
 const Profile = ({ navigation }) => {
@@ -34,64 +35,65 @@ const Profile = ({ navigation }) => {
   });
 
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const mountedRef = useRef(true);
 
-  useEffect(() => {
-    let mounted = true;
+  const fetchParentsForUsername = async (username) => {
+    const token = await AsyncStorage.getItem("token");
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Token ${token}`;
 
-    const fetchParentsForUsername = async (username) => {
-      const token = await AsyncStorage.getItem("token");
-      const headers = { "Content-Type": "application/json" };
-      if (token) headers["Authorization"] = `Token ${token}`;
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/parents/parents/`, { headers });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      let parents = Array.isArray(data) ? data : (data && data.results ? data.results : []);
+      parents = parents.filter((p) => p.username === username);
+      if (parents.length) {
+        await AsyncStorage.setItem("parent", JSON.stringify(parents[0]));
+        return parents;
+      }
+    } catch (err) {
+      console.warn("[Profile] Failed to fetch parents from API:", err?.message || err);
+    }
 
-      try {
-        const res = await fetch(`${BACKEND_URL}/api/parents/parents/`, { headers });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        let parents = Array.isArray(data) ? data : (data && data.results ? data.results : []);
-        parents = parents.filter((p) => p.username === username);
-        if (parents.length) {
-          await AsyncStorage.setItem("parent", JSON.stringify(parents[0]));
-          return parents;
+    try {
+      const storedParent = await AsyncStorage.getItem("parent");
+      if (storedParent) {
+        const parsed = JSON.parse(storedParent);
+        if (parsed && parsed.username === username) {
+          return [parsed];
         }
-      } catch (err) {
-        console.warn("[Profile] Failed to fetch parents from API:", err?.message || err);
+      }
+    } catch (err) {
+      console.warn("[Profile] Failed to read cached parent:", err?.message || err);
+    }
+
+    return [];
+  };
+
+  const fetchParent = async ({ skipLoading = false } = {}) => {
+    if (!skipLoading) setLoading(true);
+    try {
+      const username = await AsyncStorage.getItem("username");
+      if (!username) {
+        if (mountedRef.current) setLoading(false);
+        return;
       }
 
-      try {
-        const storedParent = await AsyncStorage.getItem("parent");
-        if (storedParent) {
-          const parsed = JSON.parse(storedParent);
-          if (parsed && parsed.username === username) {
-            return [parsed];
-          }
-        }
-      } catch (err) {
-        console.warn("[Profile] Failed to read cached parent:", err?.message || err);
+      const parents = await fetchParentsForUsername(username);
+      if (!mountedRef.current) return;
+      if (!parents.length) {
+        setLoading(false);
+        return;
       }
 
-      return [];
-    };
+      const p = parents[0];
+      const avatarUrl = p.avatar
+        ? (p.avatar.startsWith("http") ? p.avatar : `${BACKEND_URL}${p.avatar}`)
+        : null;
 
-    const fetchParent = async () => {
-      try {
-        const username = await AsyncStorage.getItem("username");
-        if (!username) {
-          if (mounted) setLoading(false);
-          return;
-        }
-
-        const parents = await fetchParentsForUsername(username);
-        if (!mounted) return;
-        if (!parents.length) {
-          setLoading(false);
-          return;
-        }
-
-        const p = parents[0];
-        const avatarUrl = p.avatar
-          ? (p.avatar.startsWith("http") ? p.avatar : `${BACKEND_URL}${p.avatar}`)
-          : null;
-
+      if (mountedRef.current) {
         setProfile((prev) => ({
           ...prev,
           id: p.id || prev.id,
@@ -102,15 +104,24 @@ const Profile = ({ navigation }) => {
           image: avatarUrl || prev.image,
         }));
         setLoading(false);
-      } catch (err) {
-        console.warn("Failed to load parent profile:", err.message || err);
-        if (mounted) setLoading(false);
       }
-    };
+    } catch (err) {
+      console.warn("Failed to load parent profile:", err.message || err);
+      if (mountedRef.current) setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     fetchParent();
-    return () => { mounted = false; };
+    return () => { mountedRef.current = false; };
   }, []);
+
+  const onRefresh = async () => {
+    console.log('[Profile] onRefresh called');
+    setRefreshing(true);
+    await fetchParent({ skipLoading: true });
+    setRefreshing(false);
+  };
 
   const [modalVisible, setModalVisible] = useState(false);
   const [avatarModalVisible, setAvatarModalVisible] = useState(false);
@@ -167,7 +178,7 @@ const Profile = ({ navigation }) => {
         </Text>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 30 }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: 30 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={isDark ? '#fff' : '#333'} colors={[isDark ? '#fff' : '#333']} progressBackgroundColor={isDark ? '#111' : '#fff'} />}>
         {/* Profile Card */}
         <View
           style={[

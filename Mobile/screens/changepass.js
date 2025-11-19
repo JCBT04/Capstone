@@ -6,13 +6,14 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
+  RefreshControl,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../components/ThemeContext";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
+const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com";
 const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 
 const ChangePassword = ({ navigation }) => {
@@ -29,6 +30,29 @@ const ChangePassword = ({ navigation }) => {
 
   const [loading, setLoading] = useState(false);
   const [currentError, setCurrentError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+
+  const fetchParent = async ({ skipLoading = false } = {}) => {
+    if (!skipLoading) setLoading(true);
+    try {
+      const storedParentRaw = await AsyncStorage.getItem('parent');
+      // just ensure we can parse it; this helps refresh validation
+      if (storedParentRaw) {
+        try { JSON.parse(storedParentRaw); } catch (e) { /* ignore parse errors */ }
+      }
+    } catch (e) {
+      console.warn('[ChangePass] fetchParent failed', e);
+    } finally {
+      if (!skipLoading) setLoading(false);
+    }
+  };
+
+  const onRefresh = async () => {
+    console.log('[ChangePass] onRefresh called');
+    setRefreshing(true);
+    await fetchParent({ skipLoading: true });
+    setRefreshing(false);
+  };
 
   const handleSave = async () => {
     setCurrentError("");
@@ -175,7 +199,7 @@ const ChangePassword = ({ navigation }) => {
         </Text>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: 40 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
         <View
           style={[
             styles.formCard,

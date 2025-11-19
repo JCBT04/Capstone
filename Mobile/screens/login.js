@@ -14,12 +14,11 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../components/ThemeContext";
 
 // Default placeholder for Render URL
-const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
+const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com/";
 
 const Login = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();
   const isDark = darkModeEnabled;
-
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [secureText, setSecureText] = useState(true);
@@ -63,7 +62,13 @@ const Login = ({ navigation }) => {
             await AsyncStorage.setItem("username", username);
             await AsyncStorage.setItem("parent", JSON.stringify(pjson.parent));
             setErrorMessage("");
-            navigation.navigate("home");
+            // If parent must change credentials on first login, navigate to forced-change screen
+            if (pjson.parent.must_change_credentials) {
+              // navigate to first-login flow where both username and password must be changed
+              navigation.navigate('firstlogin', { parentId: pjson.parent.id });
+            } else {
+              navigation.navigate("home");
+            }
             setLoading(false);
             return;
           }

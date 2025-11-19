@@ -4,6 +4,7 @@ import {
   Text,
   StyleSheet,
   FlatList,
+  RefreshControl,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient"; // ✅ Gradient
@@ -18,75 +19,76 @@ const Unauthorized = ({ navigation }) => {
   const [unauthorizedGuardians, setUnauthorizedGuardians] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const loadUnauthorized = async ({ skipLoading = false } = {}) => {
+    if (!skipLoading) setLoading(true);
+    try {
+      const username = await AsyncStorage.getItem('username');
+      let studentId = null;
 
-  useEffect(() => {
-    let isMounted = true;
+      if (username) {
+        const parentsResp = await fetch(`${BACKEND_URL}/api/parent/`);
+        const parentsData = await parentsResp.json();
+        const parent = Array.isArray(parentsData)
+          ? parentsData.find(p => p.username === username)
+          : (parentsData && parentsData.results ? parentsData.results.find(p => p.username === username) : null);
 
-    const loadUnauthorized = async () => {
-      try {
-        const username = await AsyncStorage.getItem('username');
-        let studentId = null;
+        if (parent) {
+          const studentsResp = await fetch(`${BACKEND_URL}/api/student/`);
+          let students = await studentsResp.json();
+          if (students && students.results) students = students.results;
+          if (!Array.isArray(students)) students = [];
 
-        if (username) {
-          const parentsResp = await fetch(`${BACKEND_URL}/api/parent/`);
-          const parentsData = await parentsResp.json();
-          const parent = Array.isArray(parentsData)
-            ? parentsData.find(p => p.username === username)
-            : (parentsData && parentsData.results ? parentsData.results.find(p => p.username === username) : null);
+          const student = students.find(s => {
+            if (!s) return false;
+            const sParent = s.parent;
+            if (sParent == null) return false;
+            if (typeof sParent === 'object') return (sParent.id === parent.id || sParent === parent.id);
+            return sParent === parent.id;
+          });
 
-          if (parent) {
-            const studentsResp = await fetch(`${BACKEND_URL}/api/student/`);
-            let students = await studentsResp.json();
-            if (students && students.results) students = students.results;
-            if (!Array.isArray(students)) students = [];
-
-            const student = students.find(s => {
-              if (!s) return false;
-              const sParent = s.parent;
-              if (sParent == null) return false;
-              if (typeof sParent === 'object') return (sParent.id === parent.id || sParent === parent.id);
-              return sParent === parent.id;
-            });
-
-            if (student) studentId = student.id;
-          }
-        }
-
-        const resp = await fetch(`${BACKEND_URL}/api/guardian/`);
-        let data = await resp.json();
-        if (data && data.results) data = data.results;
-        if (!Array.isArray(data)) data = [];
-
-        const filtered = data.filter(g => {
-          if (!g) return false;
-          if (g.authorized) return false;
-          if (!studentId) return true;
-          const gStudent = g.student;
-          if (!gStudent) return false;
-          if (typeof gStudent === 'object') return (gStudent.id === studentId || gStudent === studentId);
-          return gStudent === studentId;
-        }).map(g => ({
-          id: g.id,
-          name: g.name,
-          reason: g.phone ? `Phone: ${g.phone}` : 'Not registered in system'
-        }));
-
-        if (isMounted) {
-          setUnauthorizedGuardians(filtered);
-          setLoading(false);
-        }
-      } catch (err) {
-        console.warn('Failed to load unauthorized guardians', err);
-        if (isMounted) {
-          setError('Failed to load data');
-          setLoading(false);
+          if (student) studentId = student.id;
         }
       }
-    };
 
-    loadUnauthorized();
-    return () => { isMounted = false };
-  }, []);
+      const resp = await fetch(`${BACKEND_URL}/api/guardian/`);
+      let data = await resp.json();
+      if (data && data.results) data = data.results;
+      if (!Array.isArray(data)) data = [];
+
+      const filtered = data.filter(g => {
+        if (!g) return false;
+        if (g.authorized) return false;
+        if (!studentId) return true;
+        const gStudent = g.student;
+        if (!gStudent) return false;
+        if (typeof gStudent === 'object') return (gStudent.id === studentId || gStudent === studentId);
+        return gStudent === studentId;
+      }).map(g => ({
+        id: g.id,
+        name: g.name,
+        reason: g.phone ? `Phone: ${g.phone}` : 'Not registered in system'
+      }));
+
+      setUnauthorizedGuardians(filtered);
+      setError(null);
+    } catch (err) {
+      console.warn('Failed to load unauthorized guardians', err);
+      setError('Failed to load data');
+      setUnauthorizedGuardians([]);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => { loadUnauthorized(); }, []);
+
+  const onRefresh = async () => {
+    console.log('[Unauthorized] onRefresh called');
+    setRefreshing(true);
+    await loadUnauthorized({ skipLoading: true });
+  };
 
   const renderItem = ({ item }) => (
     <View
@@ -159,6 +161,15 @@ const Unauthorized = ({ navigation }) => {
             </View>
           )}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={isDark ? '#fff' : '#333'}
+              colors={[isDark ? '#fff' : '#333']}
+              progressBackgroundColor={isDark ? '#111' : '#fff'}
+            />
+          }
         />
       )}
     </LinearGradient>

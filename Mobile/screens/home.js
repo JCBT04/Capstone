@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Image,
   Linking,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient'; // ✅ Added gradient
@@ -14,7 +15,7 @@ import { useTheme } from '../components/ThemeContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused } from '@react-navigation/native';
 
-const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
+const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com";
 const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 const ALL_TEACHERS_ENDPOINT = `${BACKEND_URL}/api/parents/all-teachers-students/`;
 
@@ -27,6 +28,7 @@ const Home = ({ navigation }) => {
   const isDark = darkModeEnabled;
   const [childNames, setChildNames] = useState([]);
   const [loadingChild, setLoadingChild] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
     const dashboardItems = [
       { title: 'Events', icon: 'calendar', color: '#27ae60', screen: 'event' },
@@ -56,238 +58,221 @@ const Home = ({ navigation }) => {
       },
     ];
 
-  useEffect(() => {
-    if (!isFocused) return;
-    let isMounted = true;
+  const loadChild = async ({ skipLoading = false } = {}) => {
+    if (!skipLoading) setLoadingChild(true);
+    try {
+      const username = await AsyncStorage.getItem('username');
+      if (!username) {
+        setChildNames([]);
+        setLoadingChild(false);
+        return;
+      }
 
-    const loadChild = async () => {
-      try {
-        const username = await AsyncStorage.getItem('username');
-        if (!username) {
-          if (isMounted) {
-            setChildNames([]);
-            setLoadingChild(false);
-          }
-          return;
-        }
+      const extractParentsFromTeachers = (payload) => {
+        const teachersArray = Array.isArray(payload)
+          ? payload
+          : payload && Array.isArray(payload.results)
+            ? payload.results
+            : [];
 
-        const extractParentsFromTeachers = (payload) => {
-          const teachersArray = Array.isArray(payload)
-            ? payload
-            : payload && Array.isArray(payload.results)
-              ? payload.results
+        const aggregated = [];
+        teachersArray.forEach((teacher) => {
+          if (!teacher || typeof teacher !== 'object') return;
+          const students = Array.isArray(teacher.students) ? teacher.students : [];
+          students.forEach((student) => {
+            if (!student || typeof student !== 'object') return;
+            const parents = Array.isArray(student.parents_guardians)
+              ? student.parents_guardians
               : [];
-
-          const aggregated = [];
-          teachersArray.forEach((teacher) => {
-            if (!teacher || typeof teacher !== 'object') return;
-            const students = Array.isArray(teacher.students) ? teacher.students : [];
-            students.forEach((student) => {
-              if (!student || typeof student !== 'object') return;
-              const parents = Array.isArray(student.parents_guardians)
-                ? student.parents_guardians
-                : [];
-              parents.forEach((parent) => {
-                if (parent) {
-                  aggregated.push(parent);
-                }
-              });
+            parents.forEach((parent) => {
+              if (parent) {
+                aggregated.push(parent);
+              }
             });
           });
-          return aggregated;
-        };
+        });
+        return aggregated;
+      };
 
-        // Try to get stored parent data as fallback
-        let fallbackParentData = null;
-        try {
-          const storedParent = await AsyncStorage.getItem('parent');
-          if (storedParent) {
-            fallbackParentData = JSON.parse(storedParent);
-          }
-        } catch (e) {
-          console.warn('Failed to parse stored parent data', e);
+      // Try to get stored parent data as fallback
+      let fallbackParentData = null;
+      try {
+        const storedParent = await AsyncStorage.getItem('parent');
+        if (storedParent) {
+          fallbackParentData = JSON.parse(storedParent);
         }
+      } catch (e) {
+        console.warn('Failed to parse stored parent data', e);
+      }
 
-        const token = await AsyncStorage.getItem('token');
-        const headers = { 'Content-Type': 'application/json' };
+      const token = await AsyncStorage.getItem('token');
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers['Authorization'] = `Token ${token}`;
+      }
+
+      // Fetch all parent records from API (parent might have multiple children)
+      let fetchedParentRecords = [];
+      try {
+        const parentsResp = await fetch(`${BACKEND_URL}/api/parents/parents/`, { headers });
+        if (!parentsResp.ok) {
+          throw new Error(`HTTP ${parentsResp.status}`);
+        }
+        const parentsData = await parentsResp.json();
+        fetchedParentRecords = Array.isArray(parentsData) 
+          ? parentsData 
+          : (parentsData && parentsData.results ? parentsData.results : []);
+      } catch (e) {
+        console.warn('Failed to fetch parents from API, attempting fallback', e);
         if (token) {
-          headers['Authorization'] = `Token ${token}`;
-        }
-
-        // Fetch all parent records from API (parent might have multiple children)
-        let fetchedParentRecords = [];
-        try {
-          const parentsResp = await fetch(`${BACKEND_URL}/api/parents/parents/`, { headers });
-          if (!parentsResp.ok) {
-            throw new Error(`HTTP ${parentsResp.status}`);
-          }
-          const parentsData = await parentsResp.json();
-          fetchedParentRecords = Array.isArray(parentsData) 
-            ? parentsData 
-            : (parentsData && parentsData.results ? parentsData.results : []);
-        } catch (e) {
-          console.warn('Failed to fetch parents from API, attempting fallback', e);
-          if (token) {
-            try {
-              const fallbackResp = await fetch(ALL_TEACHERS_ENDPOINT, { headers });
-              if (!fallbackResp.ok) {
-                throw new Error(`All teachers HTTP ${fallbackResp.status}`);
-              }
-              const fallbackData = await fallbackResp.json();
-              fetchedParentRecords = extractParentsFromTeachers(fallbackData);
-            } catch (fallbackErr) {
-              console.warn('Failed to fetch parents from fallback endpoint', fallbackErr);
+          try {
+            const fallbackResp = await fetch(ALL_TEACHERS_ENDPOINT, { headers });
+            if (!fallbackResp.ok) {
+              throw new Error(`All teachers HTTP ${fallbackResp.status}`);
             }
-          }
-          // If everything else fails, use stored parent data as fallback
-          if (!fetchedParentRecords.length && fallbackParentData) {
-            fetchedParentRecords = [fallbackParentData];
-          }
-        }
-
-        const parentsList = username
-          ? fetchedParentRecords.filter(p => p.username === username)
-          : fetchedParentRecords;
-
-        // If no parents found, return empty
-        if (parentsList.length === 0) {
-          if (isMounted) {
-            setChildNames([]);
-            setLoadingChild(false);
-          }
-          return;
-        }
-
-        // Build a lookup of guardians per student for quick filtering on the Home screen
-        const guardiansByStudent = fetchedParentRecords.reduce((acc, record) => {
-          if (!record || typeof record !== 'object') return acc;
-          const key = (record.student_name || '').trim().toLowerCase();
-          if (!key) return acc;
-          if ((record.role || '').toLowerCase() !== 'guardian') return acc;
-          if (!acc[key]) acc[key] = [];
-          acc[key].push(record);
-          return acc;
-        }, {});
-
-        // Build child data from parent records associated with this username (each parent record = one student)
-        // ParentGuardianSerializer includes: student_name, student_lrn, student_gender, teacher_name
-        const kids = parentsList
-          .filter(p => p.student_name) // Only include parents with student info
-          .map(p => ({
-            id: p.student_lrn || p.student || p.id,
-            lrn: p.student_lrn || '',
-            name: p.student_name,
-            teacherName: p.teacher_name || '',
-            teacherPhone: p.contact_number || '',
-            attendanceStatus: null,
-            attendanceStatusLabel: null,
-            guardians: guardiansByStudent[(p.student_name || '').trim().toLowerCase()] || [],
-          }));
-
-        if (kids.length === 0) {
-          if (isMounted) {
-            setChildNames([]);
-            setLoadingChild(false);
-          }
-          return;
-        }
-
-        const fetchPublicAttendance = async () => {
-          const resp = await fetch(`${BACKEND_URL}/api/attendance/public/`);
-          if (!resp.ok) {
-            throw new Error(`Attendance HTTP ${resp.status}`);
-          }
-          let data = await resp.json();
-          if (data && data.results) data = data.results;
-          if (!Array.isArray(data)) data = [];
-          return data;
-        };
-
-        const matchesKidRecord = (record, kid) => {
-          const recName = (record.student_name || '').trim().toLowerCase();
-          const recLrn = (record.student_lrn || '').trim();
-          const kidName = (kid.name || '').trim().toLowerCase();
-          const kidLrn = (kid.lrn || '').trim();
-          const matchesName = kidName && recName === kidName;
-          const matchesLrn = kidLrn && recLrn && recLrn === kidLrn;
-          return matchesName || matchesLrn;
-        };
-
-        // Fetch today's attendance for each kid and attach status
-        try {
-          const today = new Date();
-          const todayStr = today.toISOString().slice(0,10); // YYYY-MM-DD
-          const day = today.getDay(); // 0 = Sunday, 6 = Saturday
-          const isWeekend = (day === 0 || day === 6);
-
-          if (isWeekend) {
-            // On weekends, show 'weekend' instead of present/absent and skip API calls
-            const kidsWithStatus = kids.map(k => ({ ...k, attendanceStatus: 'weekend', attendanceStatusLabel: 'No Class' }));
-            if (isMounted) {
-              setChildNames(kidsWithStatus);
-              setLoadingChild(false);
-            }
-          } else {
-            let attendanceData = [];
-            try {
-              attendanceData = await fetchPublicAttendance();
-            } catch (err) {
-              console.warn('Failed fetching public attendance list', err);
-              attendanceData = [];
-            }
-
-            const kidsWithStatus = await Promise.all(kids.map(async (kid) => {
-              try {
-                const todayAttendance = attendanceData.find(
-                  (record) => record.date === todayStr && matchesKidRecord(record, kid)
-                );
-                if (todayAttendance) {
-                  const rawStatus = (todayAttendance.status || 'Present').trim();
-                  const normalizedStatus = rawStatus.toLowerCase();
-                  return { ...kid, attendanceStatus: normalizedStatus, attendanceStatusLabel: rawStatus };
-                }
-                // no record for today -> treat as absent
-                return { ...kid, attendanceStatus: 'absent', attendanceStatusLabel: 'Absent' };
-              } catch (e) {
-                console.warn('Failed fetching attendance for', kid.name, e);
-                // On individual fetch failure, treat as absent to match desired behavior
-                return { ...kid, attendanceStatus: 'absent', attendanceStatusLabel: 'Absent' };
-              }
-            }));
-            if (isMounted) {
-              setChildNames(kidsWithStatus);
-              setLoadingChild(false);
-            }
-          }
-        } catch (e) {
-          console.warn('Failed to fetch attendance statuses', e);
-          if (isMounted) {
-            // If the attendance-status fetch as a whole failed, mark kids as absent
-            const absentKids = kids.map(k => ({ ...k, attendanceStatus: 'absent', attendanceStatusLabel: 'Absent' }));
-            setChildNames(absentKids);
-            setLoadingChild(false);
+            const fallbackData = await fallbackResp.json();
+            fetchedParentRecords = extractParentsFromTeachers(fallbackData);
+          } catch (fallbackErr) {
+            console.warn('Failed to fetch parents from fallback endpoint', fallbackErr);
           }
         }
-        
-      } catch (err) {
-        console.warn('Failed loading child', err);
-        if (isMounted) {
-          setChildNames([]);
-          setLoadingChild(false);
+        // If everything else fails, use stored parent data as fallback
+        if (!fetchedParentRecords.length && fallbackParentData) {
+          fetchedParentRecords = [fallbackParentData];
         }
       }
-    };
 
+      const parentsList = username
+        ? fetchedParentRecords.filter(p => p.username === username)
+        : fetchedParentRecords;
+
+      // If no parents found, return empty
+      if (parentsList.length === 0) {
+        setChildNames([]);
+        setLoadingChild(false);
+        return;
+      }
+
+      // Build a lookup of guardians per student for quick filtering on the Home screen
+      const guardiansByStudent = fetchedParentRecords.reduce((acc, record) => {
+        if (!record || typeof record !== 'object') return acc;
+        const key = (record.student_name || '').trim().toLowerCase();
+        if (!key) return acc;
+        if ((record.role || '').toLowerCase() !== 'guardian') return acc;
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(record);
+        return acc;
+      }, {});
+
+      // Build child data from parent records associated with this username (each parent record = one student)
+      const kids = parentsList
+        .filter(p => p.student_name)
+        .map(p => ({
+          id: p.student_lrn || p.student || p.id,
+          lrn: p.student_lrn || '',
+          name: p.student_name,
+          teacherName: p.teacher_name || '',
+          teacherPhone: p.contact_number || '',
+          attendanceStatus: null,
+          attendanceStatusLabel: null,
+          guardians: guardiansByStudent[(p.student_name || '').trim().toLowerCase()] || [],
+        }));
+
+      if (kids.length === 0) {
+        setChildNames([]);
+        setLoadingChild(false);
+        return;
+      }
+
+      const fetchPublicAttendance = async () => {
+        const resp = await fetch(`${BACKEND_URL}/api/attendance/public/`);
+        if (!resp.ok) {
+          throw new Error(`Attendance HTTP ${resp.status}`);
+        }
+        let data = await resp.json();
+        if (data && data.results) data = data.results;
+        if (!Array.isArray(data)) data = [];
+        return data;
+      };
+
+      const matchesKidRecord = (record, kid) => {
+        const recName = (record.student_name || '').trim().toLowerCase();
+        const recLrn = (record.student_lrn || '').trim();
+        const kidName = (kid.name || '').trim().toLowerCase();
+        const kidLrn = (kid.lrn || '').trim();
+        const matchesName = kidName && recName === kidName;
+        const matchesLrn = kidLrn && recLrn && recLrn === kidLrn;
+        return matchesName || matchesLrn;
+      };
+
+      try {
+        const today = new Date();
+        const todayStr = today.toISOString().slice(0,10);
+        const day = today.getDay();
+        const isWeekend = (day === 0 || day === 6);
+
+        if (isWeekend) {
+          const kidsWithStatus = kids.map(k => ({ ...k, attendanceStatus: 'weekend', attendanceStatusLabel: 'No Class' }));
+          setChildNames(kidsWithStatus);
+          setLoadingChild(false);
+        } else {
+          let attendanceData = [];
+          try {
+            attendanceData = await fetchPublicAttendance();
+          } catch (err) {
+            console.warn('Failed fetching public attendance list', err);
+            attendanceData = [];
+          }
+
+          const kidsWithStatus = await Promise.all(kids.map(async (kid) => {
+            try {
+              const todayAttendance = attendanceData.find(
+                (record) => record.date === todayStr && matchesKidRecord(record, kid)
+              );
+              if (todayAttendance) {
+                const rawStatus = (todayAttendance.status || 'Present').trim();
+                const normalizedStatus = rawStatus.toLowerCase();
+                return { ...kid, attendanceStatus: normalizedStatus, attendanceStatusLabel: rawStatus };
+              }
+              return { ...kid, attendanceStatus: 'absent', attendanceStatusLabel: 'Absent' };
+            } catch (e) {
+              console.warn('Failed fetching attendance for', kid.name, e);
+              return { ...kid, attendanceStatus: 'absent', attendanceStatusLabel: 'Absent' };
+            }
+          }));
+          setChildNames(kidsWithStatus);
+          setLoadingChild(false);
+        }
+      } catch (e) {
+        console.warn('Failed to fetch attendance statuses', e);
+        const absentKids = kids.map(k => ({ ...k, attendanceStatus: 'absent', attendanceStatusLabel: 'Absent' }));
+        setChildNames(absentKids);
+        setLoadingChild(false);
+      }
+    } catch (err) {
+      console.warn('Failed loading child', err);
+      setChildNames([]);
+      setLoadingChild(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isFocused) return;
     loadChild();
-
-    return () => { isMounted = false };
   }, [isFocused]);
+
+  const onRefresh = async () => {
+    console.log('[Home] onRefresh called');
+    setRefreshing(true);
+    await loadChild({ skipLoading: true });
+    setRefreshing(false);
+  };
 
   return (
     <LinearGradient
       colors={isDark ? ['#0b0f19', '#1a1f2b'] : ['#f5f5f5', '#e0e0e0']}
       style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
         {/* Header */}
         <View
           style={[
@@ -319,7 +304,7 @@ const Home = ({ navigation }) => {
                               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <Text style={[styles.childName, { color: '#fff' }]}>{c.name}</Text>
                                 <View style={[
-                                  styles.statusContainer,
+                                  styles.statusContainer,{marginLeft: 20},
                                   c.attendanceStatus === 'present' ? { backgroundColor: '#2ecc71' } :
                                   c.attendanceStatus === 'absent' ? { backgroundColor: '#e74c3c' } :
                                   c.attendanceStatus === 'weekend' ? { backgroundColor: '#3498db' } :

@@ -1,12 +1,12 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import React, { useEffect, useState, useRef } from "react";
+import { View, Text, StyleSheet, ScrollView, RefreshControl } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Calendar } from "react-native-calendars";
 import { LinearGradient } from "expo-linear-gradient"; // ✅ Added gradient
 import { useTheme } from "../components/ThemeContext";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
+const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com";
 const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 
 const Attendance = ({ navigation }) => {
@@ -15,6 +15,8 @@ const Attendance = ({ navigation }) => {
   const [markedDates, setMarkedDates] = useState({});
   const [loading, setLoading] = useState(true);
   const [attDataState, setAttDataState] = useState([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const mountedRef = useRef(true);
   const [currentMonth, setCurrentMonth] = useState(() => {
     const d = new Date();
     return { year: d.getFullYear(), month: d.getMonth() + 1 };
@@ -132,61 +134,60 @@ const Attendance = ({ navigation }) => {
     return filtered;
   };
 
-  useEffect(() => {
-    let isMounted = true;
-
-    
-
-    const loadAttendance = async () => {
-      try {
-        const username = await AsyncStorage.getItem('username');
-        if (!username) {
-          if (isMounted) setLoading(false);
-          return;
-        }
-
-        const parentsList = await fetchParentsForUsername(username);
-        if (!parentsList.length) {
-          if (isMounted) setLoading(false);
-          return;
-        }
-
-        const kidsData = parentsList
-          .filter(p => p && p.student_name)
-          .map(p => ({
-            id: p.student_lrn || p.student || p.id,
-            lrn: p.student_lrn || '',
-            name: p.student_name,
-            teacherName: p.teacher_name || '',
-            teacherPhone: p.contact_number || '',
-          }));
-
-        if (!kidsData.length) {
-          if (isMounted) setLoading(false);
-          return;
-        }
-
-        const nextActiveIndex = Math.min(activeKidIndex, kidsData.length - 1);
-        const kid = kidsData[nextActiveIndex];
-        const attData = await fetchAttendanceRecords(kid);
-        const map = buildMarkedForMonth(attData, currentMonth.year, currentMonth.month);
-
-        if (isMounted) {
-          setKids(kidsData);
-          setActiveKidIndex(nextActiveIndex);
-          setAttDataState(attData);
-          setMarkedDates(map);
-          setLoading(false);
-        }
-      } catch (err) {
-        console.warn('Failed to load attendance', err);
-        if (isMounted) setLoading(false);
+  const loadAttendance = async ({ skipLoading = false } = {}) => {
+    if (!skipLoading) setLoading(true);
+    try {
+      const username = await AsyncStorage.getItem('username');
+      if (!username) {
+        if (mountedRef.current) setLoading(false);
+        return;
       }
-    };
 
+      const parentsList = await fetchParentsForUsername(username);
+      if (!parentsList.length) {
+        if (mountedRef.current) setLoading(false);
+        return;
+      }
+
+      const kidsData = parentsList
+        .filter(p => p && p.student_name)
+        .map(p => ({
+          id: p.student_lrn || p.student || p.id,
+          lrn: p.student_lrn || '',
+          name: p.student_name,
+          teacherName: p.teacher_name || '',
+          teacherPhone: p.contact_number || '',
+        }));
+
+      if (!kidsData.length) {
+        if (mountedRef.current) setLoading(false);
+        return;
+      }
+
+      const nextActiveIndex = Math.min(activeKidIndex, kidsData.length - 1);
+      const kid = kidsData[nextActiveIndex];
+      const attData = await fetchAttendanceRecords(kid);
+      const map = buildMarkedForMonth(attData, currentMonth.year, currentMonth.month);
+
+      if (mountedRef.current) {
+        setKids(kidsData);
+        setActiveKidIndex(nextActiveIndex);
+        setAttDataState(attData);
+        setMarkedDates(map);
+        setLoading(false);
+      }
+    } catch (err) {
+      console.warn('Failed to load attendance', err);
+      if (mountedRef.current) setLoading(false);
+    } finally {
+      if (mountedRef.current) setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    mountedRef.current = true;
     loadAttendance();
-
-    return () => { isMounted = false };
+    return () => { mountedRef.current = false; };
   }, []);
 
   // when month changes in the calendar, rebuild markedDates for that month
@@ -208,6 +209,12 @@ const Attendance = ({ navigation }) => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const onRefresh = async () => {
+    console.log('[Attendance] onRefresh called');
+    setRefreshing(true);
+    await loadAttendance({ skipLoading: true });
   };
 
   return (
@@ -240,6 +247,7 @@ const Attendance = ({ navigation }) => {
       </View>
 
       {/* Active child info */}
+      <ScrollView contentContainerStyle={{ flexGrow: 1 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={isDark ? '#fff' : '#333'} colors={[isDark ? '#fff' : '#333']} progressBackgroundColor={isDark ? '#111' : '#fff'} />}>
       {activeKid ? (
         <View style={[styles.childCard, { backgroundColor: isDark ? "#1e1e1e" : "#fff" }]}>
           <Text style={[styles.childLabel, { color: isDark ? "#bbb" : "#666" }]}>
@@ -300,6 +308,7 @@ const Attendance = ({ navigation }) => {
           <Text style={{ color: isDark ? "#fff" : "#333" }}>Absent</Text>
         </View>
       </View>
+      </ScrollView>
     </LinearGradient>
   );
 };

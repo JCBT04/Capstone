@@ -5,13 +5,14 @@ import {
   StyleSheet,
   FlatList,
   TouchableOpacity,
+  RefreshControl,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../components/ThemeContext";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
+const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com";
 const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 
 const EVENTS_ENDPOINT = `${BACKEND_URL}/api/parents/events/`;
@@ -57,6 +58,7 @@ const Events = ({ navigation }) => {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const parseStoredParent = async () => {
     const storedParentRaw = await AsyncStorage.getItem("parent");
@@ -181,62 +183,63 @@ const Events = ({ navigation }) => {
     });
   };
 
-  useEffect(() => {
-    let mounted = true;
+  const loadEvents = async ({ skipLoading = false } = {}) => {
+    if (!skipLoading) setLoading(true);
+    try {
+      const context = await determineParentContext();
 
-    const loadEvents = async () => {
-      try {
-        const context = await determineParentContext();
+      const token = await AsyncStorage.getItem("token");
+      const headers = { "Content-Type": "application/json" };
+      if (token) headers.Authorization = `Token ${token}`;
 
-        const token = await AsyncStorage.getItem("token");
-        const headers = { "Content-Type": "application/json" };
-        if (token) headers.Authorization = `Token ${token}`;
-
-        const query = buildEventsQuery(context);
-        const resp = await fetch(query, { headers });
-        if (!resp.ok) {
-          throw new Error(`Events HTTP ${resp.status}`);
-        }
-        const respData = await resp.json();
-
-        let data = respData;
-        // handle paginated DRF responses
-        if (data && data.results) data = data.results;
-        if (!Array.isArray(data)) data = [];
-
-        const filtered = filterEventsByContext(data, context);
-
-        if (mounted) {
-          if (Array.isArray(filtered) && filtered.length) {
-            setEvents(
-              filtered.map((e, ix) => ({
-                id: e.id ? String(e.id) : String(ix + 1),
-                title: e.title || e.name || 'Event',
-                date: e.date || e.start_date || e.scheduled_at || '',
-                description: e.description || '',
-                icon: e.icon || 'calendar',
-                color: pickColor(e.id || e.title || ix),
-              }))
-            );
-          } else {
-            setEvents([]);
-          }
-          setLoading(false);
-        }
-      } catch (err) {
-        console.warn('Failed to fetch events, using fallback', err);
-        if (mounted) {
-          setError('Could not load events');
-          setEvents([]);
-          setLoading(false);
-        }
+      const query = buildEventsQuery(context);
+      const resp = await fetch(query, { headers });
+      if (!resp.ok) {
+        throw new Error(`Events HTTP ${resp.status}`);
       }
+      const respData = await resp.json();
+
+      let data = respData;
+      // handle paginated DRF responses
+      if (data && data.results) data = data.results;
+      if (!Array.isArray(data)) data = [];
+
+      const filtered = filterEventsByContext(data, context);
+
+      if (Array.isArray(filtered) && filtered.length) {
+        setEvents(
+          filtered.map((e, ix) => ({
+            id: e.id ? String(e.id) : String(ix + 1),
+            title: e.title || e.name || 'Event',
+            date: e.date || e.start_date || e.scheduled_at || '',
+            description: e.description || '',
+            icon: e.icon || 'calendar',
+            color: pickColor(e.id || e.title || ix),
+          }))
+        );
+      } else {
+        setEvents([]);
+      }
+      setError(null);
+    } catch (err) {
+      console.warn('Failed to fetch events, using fallback', err);
+      setError('Could not load events');
+      setEvents([]);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
+  };
 
+  useEffect(() => {
     loadEvents();
-
-    return () => { mounted = false };
   }, []);
+
+  const onRefresh = async () => {
+    console.log('[Events] onRefresh called');
+    setRefreshing(true);
+    await loadEvents({ skipLoading: true });
+  };
 
   const renderItem = ({ item }) => (
     <TouchableOpacity
@@ -311,6 +314,15 @@ const Events = ({ navigation }) => {
               <Text style={{ color: isDark ? '#fff' : '#333' }}>{error ? error : 'No events found'}</Text>
             </View>
           )}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={isDark ? '#fff' : '#333'}
+              colors={[isDark ? '#fff' : '#333']}
+              progressBackgroundColor={isDark ? '#111' : '#fff'}
+            />
+          }
         />
       )}
     </LinearGradient>

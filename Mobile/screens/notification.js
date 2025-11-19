@@ -5,13 +5,14 @@ import {
   StyleSheet,
   FlatList,
   ActivityIndicator,
+  RefreshControl,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../components/ThemeContext";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
+const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com";
 const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 const Notifications = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();
@@ -21,6 +22,7 @@ const Notifications = ({ navigation }) => {
 
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Notification color strategy: single color or deterministic per-notification
   const USE_SINGLE_COLOR_NOTIF = false; // set true to force one color for all notifications
@@ -55,52 +57,64 @@ const Notifications = ({ navigation }) => {
     return NOTIF_PALETTE[idx];
   };
 
+  // Fetch helper (returns mapped notifications)
+  const fetchNotificationsFromAPI = async () => {
+    const parentRaw = await AsyncStorage.getItem("parent");
+    let query = "";
+    if (parentRaw) {
+      try {
+        const parent = JSON.parse(parentRaw);
+        if (parent && parent.id) {
+          query = `?parent=${encodeURIComponent(parent.id)}`;
+        }
+      } catch (err) {
+        console.warn("Failed to parse parent cache", err);
+      }
+    }
+
+    const res = await fetch(`${BACKEND_URL}/api/parents/notifications/${query}`);
+    if (!res.ok) throw new Error('Network response not ok');
+    const data = await res.json();
+    const TYPE_LABELS = { attendance: 'Attendance', pickup: 'Pickup', event: 'Event', other: 'Other' };
+
+    return data.map((n) => ({
+      id: String(n.id),
+      type: n.type,
+      typeLabel: TYPE_LABELS[n.type] || (n.type ? String(n.type).charAt(0).toUpperCase() + String(n.type).slice(1) : 'Other'),
+      message: n.message,
+      time: n.created_at ? new Date(n.created_at).toLocaleString() : '',
+      icon: (n.type === 'attendance' ? 'alert-circle-outline' : n.type === 'pickup' ? 'person-circle-outline' : 'calendar-outline'),
+      color: pickColorForNotif(n.id || n.type),
+    }));
+  };
+
   useEffect(() => {
     let mounted = true;
-
-    const fetchNotifications = async () => {
+    (async () => {
       try {
-        const parentRaw = await AsyncStorage.getItem("parent");
-        let query = "";
-        if (parentRaw) {
-          try {
-            const parent = JSON.parse(parentRaw);
-            if (parent && parent.id) {
-              query = `?parent=${encodeURIComponent(parent.id)}`;
-            }
-          } catch (err) {
-            console.warn("Failed to parse parent cache", err);
-          }
-        }
-
-        const res = await fetch(`${BACKEND_URL}/api/notifications/${query}`);
-        if (!res.ok) throw new Error('Network response not ok');
-        const data = await res.json();
+        const items = await fetchNotificationsFromAPI();
         if (!mounted) return;
-        const TYPE_LABELS = { attendance: 'Attendance', pickup: 'Pickup', event: 'Event', other: 'Other' };
-
-        const mapped = data.map((n) => ({
-          id: String(n.id),
-          type: n.type,
-          typeLabel: TYPE_LABELS[n.type] || (n.type ? String(n.type).charAt(0).toUpperCase() + String(n.type).slice(1) : 'Other'),
-          message: n.message,
-          time: n.created_at ? new Date(n.created_at).toLocaleString() : '',
-          // derive icon on the client side from the type
-          icon: (n.type === 'attendance' ? 'alert-circle-outline' : n.type === 'pickup' ? 'person-circle-outline' : 'calendar-outline'),
-          // compute deterministic color client-side (ignore persisted color)
-          color: pickColorForNotif(n.id || n.type),
-        }));
-        setNotifications(mapped);
+        setNotifications(items);
       } catch (err) {
         console.warn('Failed to load notifications:', err.message || err);
       } finally {
         if (mounted) setLoading(false);
       }
-    };
-
-    fetchNotifications();
+    })();
     return () => { mounted = false; };
   }, []);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    try {
+      const items = await fetchNotificationsFromAPI();
+      setNotifications(items);
+    } catch (err) {
+      console.warn('Refresh failed:', err);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const renderItem = ({ item }) => (
     <LinearGradient
@@ -158,13 +172,36 @@ const Notifications = ({ navigation }) => {
       </View>
 
       {/* List */}
-      <FlatList
-        data={notifications}
-        renderItem={renderItem}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={{ padding: 16 }}
-        showsVerticalScrollIndicator={false}
-      />
+      {loading ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color={isDark ? '#fff' : '#333'} />
+        </View>
+      ) : (
+        <FlatList
+          data={notifications}
+          renderItem={renderItem}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{ padding: 16 }}
+          showsVerticalScrollIndicator={false}
+          style={{ flex: 1 }}
+          extraData={notifications}
+          keyboardShouldPersistTaps="handled"
+          ListEmptyComponent={() => (
+            <View style={{ padding: 20, alignItems: 'center' }}>
+              <Text style={{ color: isDark ? '#fff' : '#333' }}>No notifications</Text>
+            </View>
+          )}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => { console.log('[Notifications] onRefresh called'); onRefresh(); }}
+              tintColor={isDark ? '#fff' : '#333'}
+              colors={[isDark ? '#fff' : '#333']}
+              progressBackgroundColor={isDark ? '#111' : '#fff'}
+            />
+          }
+        />
+      )}
     </LinearGradient>
   );
 };

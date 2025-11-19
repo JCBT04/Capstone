@@ -27,15 +27,27 @@ const Settings = ({ navigation }) => {
   const logoutNow = async () => {
     try {
       console.log('logoutNow: removing username/lastRoute');
-      await AsyncStorage.removeItem('username');
-      await AsyncStorage.removeItem('lastRoute');
+      // Remove known session keys atomically
+      const keysToRemove = ['username', 'lastRoute', 'parent', 'token', 'parents'];
+      try {
+        await AsyncStorage.multiRemove(keysToRemove);
+        console.log('logoutNow: multiRemove succeeded', keysToRemove);
+      } catch (mrErr) {
+        console.warn('logoutNow: multiRemove failed, falling back to individual removes', mrErr);
+        await AsyncStorage.removeItem('username');
+        await AsyncStorage.removeItem('lastRoute');
+        await AsyncStorage.removeItem('parent');
+        await AsyncStorage.removeItem('token');
+        await AsyncStorage.removeItem('parents');
+      }
 
       const checkUser = await AsyncStorage.getItem('username');
       const checkLast = await AsyncStorage.getItem('lastRoute');
-      console.log('logoutNow post-remove username:', checkUser, 'lastRoute:', checkLast);
+      const checkParent = await AsyncStorage.getItem('parent');
+      console.log('logoutNow post-remove username:', checkUser, 'lastRoute:', checkLast, 'parent:', checkParent);
 
-      if (checkUser) {
-        console.warn('logoutNow: username still present — clearing all AsyncStorage');
+      if (checkUser || checkParent) {
+        console.warn('logoutNow: session keys still present — clearing all AsyncStorage');
         await AsyncStorage.clear();
       }
 

@@ -5,16 +5,20 @@ import {
   StyleSheet,
   FlatList,
   TouchableOpacity,
+  RefreshControl,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient"; // ✅ Added gradient
 import { useTheme } from "../components/ThemeContext";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
+const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com";
 const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 const PARENTS_ENDPOINT = `${BACKEND_URL}/api/parents/parents/`;
-const SCHEDULE_ENDPOINT = `${BACKEND_URL}/api/schedule/`;
+const SCHEDULE_ENDPOINTS = [
+  `${BACKEND_URL}/api/parents/schedules/`,
+  `${BACKEND_URL}/api/schedule/`,
+];
 
 const Schedule = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();
@@ -57,6 +61,7 @@ const Schedule = ({ navigation }) => {
   const [scheduleData, setScheduleData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const capitalize = (value) => {
     if (!value || typeof value !== 'string') return '';
@@ -123,71 +128,84 @@ const Schedule = ({ navigation }) => {
     return null;
   };
 
-  useEffect(() => {
-    let isMounted = true;
-
-    const loadSchedule = async () => {
+  const loadSchedule = async ({ skipLoading = false } = {}) => {
+    if (!skipLoading) {
       setLoading(true);
       setErrorMessage(null);
+    }
+    try {
+      const username = await AsyncStorage.getItem('username');
+      const studentLrn = await determineStudentLrn(username);
 
-      try {
-        const username = await AsyncStorage.getItem('username');
-        const studentLrn = await determineStudentLrn(username);
+      let schedules = [];
+      let lastError = null;
+      for (const endpoint of SCHEDULE_ENDPOINTS) {
         const query = studentLrn
-          ? `${SCHEDULE_ENDPOINT}?lrn=${encodeURIComponent(studentLrn)}`
-          : SCHEDULE_ENDPOINT;
+          ? `${endpoint}?lrn=${encodeURIComponent(studentLrn)}`
+          : endpoint;
+        try {
+          const resp = await fetch(query);
+          if (!resp.ok) {
+            throw new Error(`Schedule HTTP ${resp.status}`);
+          }
 
-        const resp = await fetch(query);
-        if (!resp.ok) {
-          throw new Error(`Schedule HTTP ${resp.status}`);
-        }
-
-        let schedules = await resp.json();
-        if (schedules && schedules.results) schedules = schedules.results;
-        if (!Array.isArray(schedules)) schedules = [];
-
-        const mapped = schedules.map((s) => {
-          const dayLabel = s.day_of_week ? capitalize(s.day_of_week) : '';
-          const timeLabel =
-            s.time_label ||
-            buildTimeWindow(s.start_time, s.end_time) ||
-            s.extra_data?.time ||
-            '';
-          const combinedTime = [dayLabel, timeLabel]
-            .filter(Boolean)
-            .join(dayLabel && timeLabel ? ' • ' : '');
-
-          return {
-            id: s.id,
-            subject: s.subject || s.title || 'Subject',
-            time: combinedTime || 'Schedule pending',
-            room: s.room || s.extra_data?.room || 'Room not set',
-            icon: s.icon || 'book-outline',
-            color: pickColor(s.id || s.subject || s.student_lrn || s.student),
-          };
-        });
-
-        if (isMounted) {
-          setScheduleData(mapped);
-        }
-      } catch (err) {
-        console.warn('Failed loading schedule', err);
-        if (isMounted) {
-          setScheduleData([]);
-          setErrorMessage('Unable to load schedule right now.');
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false);
+          let payload = await resp.json();
+          if (payload && payload.results) payload = payload.results;
+          if (!Array.isArray(payload)) payload = [];
+          schedules = payload;
+          break;
+        } catch (fetchErr) {
+          lastError = fetchErr;
         }
       }
-    };
 
+      if (!Array.isArray(schedules) || !schedules.length) {
+        if (lastError) throw lastError;
+        schedules = [];
+      }
+
+      const mapped = schedules.map((s) => {
+        const dayLabel = s.day_of_week ? capitalize(s.day_of_week) : '';
+        const timeLabel =
+          s.time_label ||
+          buildTimeWindow(s.start_time, s.end_time) ||
+          s.extra_data?.time ||
+          '';
+        const combinedTime = [dayLabel, timeLabel]
+          .filter(Boolean)
+          .join(dayLabel && timeLabel ? ' • ' : '');
+
+        return {
+          id: s.id,
+          subject: s.subject || s.title || 'Subject',
+          time: combinedTime || 'Schedule pending',
+          room: s.room || s.extra_data?.room || 'Room not set',
+          icon: s.icon || 'book-outline',
+          color: pickColor(s.id || s.subject || s.student_lrn || s.student),
+        };
+      });
+
+      setScheduleData(mapped);
+      setErrorMessage(null);
+    } catch (err) {
+      console.warn('Failed loading schedule', err);
+      setScheduleData([]);
+      setErrorMessage('Unable to load schedule right now.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
     loadSchedule();
-    return () => {
-      isMounted = false;
-    };
   }, []);
+
+  const onRefresh = async () => {
+    console.log('[Schedule] onRefresh called');
+    setRefreshing(true);
+    await loadSchedule({ skipLoading: true });
+  };
 
   const renderItem = ({ item }) => (
     <TouchableOpacity
@@ -253,6 +271,15 @@ const Schedule = ({ navigation }) => {
           </View>
         ) : null}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={isDark ? '#fff' : '#333'}
+            colors={[isDark ? '#fff' : '#333']}
+            progressBackgroundColor={isDark ? '#111' : '#fff'}
+          />
+        }
       />
     </LinearGradient>
   );
