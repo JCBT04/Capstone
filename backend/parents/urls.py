@@ -30,4 +30,6 @@ urlpatterns = [
     path('notifications/', ParentNotificationListCreateView.as_view(), name='parent-notifications'),
     path('events/', ParentEventListCreateView.as_view(), name='parent-events'),
     path('schedules/', ParentScheduleListCreateView.as_view(), name='parent-schedules'),
+    path('parents/public/', ParentGuardianPublicListView.as_view(), name='parents-public-list'),
+
 ]

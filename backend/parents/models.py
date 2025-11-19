@@ -50,6 +50,8 @@ class ParentGuardian(models.Model):
     name = models.CharField(max_length=100)
     username = models.CharField(max_length=100, blank=True, null=True)
     password = models.CharField(max_length=100, blank=True, null=True)
+    # When True the parent must change both username and password on first successful login
+    must_change_credentials = models.BooleanField(default=False)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
     contact_number = models.CharField(max_length=15, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)

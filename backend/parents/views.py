@@ -116,13 +116,33 @@ def _perform_registration(data, request_user=None):
         }
 
         # Store password as provided (plain text) per user request
+        # If username or password not provided, generate defaults per requirements:
+        # default username = last name of the provided parent name
+        # default password = <username> + '123'
+        provided_username = (parent_data.get("username") or "").strip()
+        provided_password = (parent_data.get("password") or "").strip()
+
+        if not provided_username:
+            # derive last name as last token of the name
+            name_parts = (parent_data.get("name") or "").strip().split()
+            derived_username = name_parts[-1] if len(name_parts) else "parent"
+            provided_username = derived_username
+
+        if not provided_password:
+            provided_password = f"{provided_username}123"
+
+        # determine whether credentials were auto-generated (require change on first login)
+        must_change = (not bool(parent_data.get("username"))) or (not bool(parent_data.get("password")))
+
+
         pg = ParentGuardian.objects.create(
             student=student,
             teacher=teacher,
             name=parent_data["name"],
             role=parent_data["role"],
-            username=parent_data.get("username", ""),
-            password=parent_data.get("password", ""),
+            username=provided_username,
+            password=provided_password,
+            must_change_credentials=must_change,
             contact_number=parent_data["contact"],
             email=parent_data["email"],
             address=data.get("address", ""),
@@ -387,7 +407,13 @@ class ParentDetailView(APIView):
 
         # Accept both JSON and multipart form-data. Update known fields only.
         updated = False
+        # capture originals to decide if must_change_credentials can be cleared
+        orig_username = parent.username
+        orig_password = parent.password
+        orig_must = getattr(parent, 'must_change_credentials', False)
+
         # Handle password change explicitly: require current_password match
+        changed_password = False
         if isinstance(data, dict) and 'password' in data:
             new_pw = data.get('password')
             current_pw = data.get('current_password')
@@ -398,8 +424,16 @@ class ParentDetailView(APIView):
                 return Response({'error': 'Current password is incorrect.'}, status=status.HTTP_401_UNAUTHORIZED)
             parent.password = str(new_pw)
             updated = True
+            changed_password = True
+
+        changed_username = False
         for field in ('name', 'username', 'contact_number', 'address', 'email'):
             if field in data:
+                # track username change
+                if field == 'username':
+                    new_un = data.get('username')
+                    if new_un is not None and str(new_un) != (orig_username or ''):
+                        changed_username = True
                 setattr(parent, field, data.get(field))
                 updated = True
 
@@ -412,6 +446,10 @@ class ParentDetailView(APIView):
             updated = True
 
         if updated:
+            # If parent was flagged to change credentials on first login, and the request
+            # includes both a username change and a password change, clear that flag.
+            if orig_must and changed_username and changed_password:
+                parent.must_change_credentials = False
             parent.save()
             # debug after save
             try:

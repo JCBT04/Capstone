@@ -37,6 +37,8 @@ class ParentGuardianSerializer(serializers.ModelSerializer):
     teacher_name = serializers.CharField(source='teacher.user.username', read_only=True)
     # store password in plaintext (as requested) - this will be returned in API responses
     password = serializers.CharField(max_length=100, required=False, allow_blank=True)
+   
+    must_change_credentials = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = ParentGuardian
@@ -56,6 +58,9 @@ class ParentGuardianSerializer(serializers.ModelSerializer):
             'address',
             'qr_code_data',
             'password',
+
+            'must_change_credentials',
+            
             'created_at',
         ]
         read_only_fields = ['created_at', 'teacher']
