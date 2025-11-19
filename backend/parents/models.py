@@ -69,6 +69,46 @@ class ParentGuardian(models.Model):
         verbose_name = "Parent/Guardian"
         verbose_name_plural = "Parents/Guardians"
 
+    def save(self, *args, **kwargs):
+        """
+        Auto-generate username/password when not provided and mark the record
+        as requiring a credentials change on first login.
+        This makes the behavior consistent whether records are created via
+        the registration endpoint or the Django admin.
+        """
+        # determine if this is a new record
+        is_new = self.pk is None
+
+        orig_username = getattr(self, 'username', None)
+        orig_password = getattr(self, 'password', None)
+
+        username_missing = not orig_username or str(orig_username).strip() == ''
+        password_missing = not orig_password or str(orig_password).strip() == ''
+
+        generated_username = None
+        if username_missing:
+            # derive last token of the name as default username
+            name_parts = (self.name or '').strip().split()
+            base = name_parts[-1] if len(name_parts) else 'parent'
+            candidate = base
+            suffix = 1
+            # avoid simple collisions by appending a numeric suffix when necessary
+            while ParentGuardian.objects.filter(username=candidate).exclude(pk=self.pk).exists():
+                candidate = f"{base}{suffix}"
+                suffix += 1
+            self.username = candidate
+            generated_username = candidate
+
+        if password_missing:
+            uname_for_pw = generated_username or (self.username or 'parent')
+            self.password = f"{uname_for_pw}123"
+
+        # If either credential was auto-generated on creation, require change on first login
+        if is_new and (username_missing or password_missing):
+            self.must_change_credentials = True
+
+        super().save(*args, **kwargs)
+
 # new
 class ParentNotification(models.Model):
     NOTIFICATION_TYPES = [

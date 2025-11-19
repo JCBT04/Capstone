@@ -13,7 +13,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../components/ThemeContext';
 
-const DEFAULT_RENDER_BACKEND_URL = 'https://childtrack-backend.onrender.com';
+const DEFAULT_RENDER_BACKEND_URL = 'https://capstone-foal.onrender.com';
 const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, '');
 
 const FirstLogin = ({ navigation, route }) => {
