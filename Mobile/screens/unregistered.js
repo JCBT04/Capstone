@@ -5,6 +5,12 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../components/ThemeContext";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
+const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
+const PARENTS_ENDPOINT = `${BACKEND_URL}/api/parents/parents/`;
+const ALL_TEACHERS_ENDPOINT = `${BACKEND_URL}/api/parents/all-teachers-students/`;
+const GUARDIAN_ENDPOINT = `${BACKEND_URL}/api/guardian/`;
+const GUARDIAN_PUBLIC_ENDPOINT = `${BACKEND_URL}/api/guardian/public/`;
 
 const Unregistered = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();
@@ -13,63 +19,155 @@ const Unregistered = ({ navigation }) => {
   const [unregisteredList, setUnregisteredList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [processingId, setProcessingId] = useState(null);
+
+  const extractParentsFromTeachers = (payload) => {
+    const teachersArray = Array.isArray(payload)
+      ? payload
+      : payload && Array.isArray(payload.results)
+        ? payload.results
+        : [];
+
+    const aggregated = [];
+    teachersArray.forEach((teacher) => {
+      if (!teacher || typeof teacher !== "object") return;
+      const students = Array.isArray(teacher.students) ? teacher.students : [];
+      students.forEach((student) => {
+        if (!student || typeof student !== "object") return;
+        const parents = Array.isArray(student.parents_guardians)
+          ? student.parents_guardians
+          : [];
+        parents.forEach((parent) => {
+          if (parent) aggregated.push(parent);
+        });
+      });
+    });
+    return aggregated;
+  };
+
+  const fetchParentRecords = async () => {
+    const token = await AsyncStorage.getItem('token');
+    const storedParentRaw = await AsyncStorage.getItem('parent');
+
+    let storedParent = null;
+    if (storedParentRaw) {
+      try {
+        storedParent = JSON.parse(storedParentRaw);
+      } catch (parseErr) {
+        console.warn("[Unregistered] Failed parsing stored parent data", parseErr);
+      }
+    }
+
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers.Authorization = `Token ${token}`;
+
+    let parentRecords = [];
+    if (token) {
+      try {
+        const res = await fetch(PARENTS_ENDPOINT, { headers });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        let payload = await res.json();
+        if (Array.isArray(payload)) {
+          parentRecords = payload;
+        } else if (payload && Array.isArray(payload.results)) {
+          parentRecords = payload.results;
+        }
+      } catch (primaryErr) {
+        console.warn("[Unregistered] primary parents fetch failed", primaryErr);
+        try {
+          const fallbackRes = await fetch(ALL_TEACHERS_ENDPOINT, { headers });
+          if (!fallbackRes.ok) throw new Error(`Fallback HTTP ${fallbackRes.status}`);
+          const fallbackPayload = await fallbackRes.json();
+          parentRecords = extractParentsFromTeachers(fallbackPayload);
+        } catch (fallbackErr) {
+          console.warn("[Unregistered] fallback parents fetch failed", fallbackErr);
+        }
+      }
+    }
+
+    if (!parentRecords.length && storedParent) {
+      parentRecords = [storedParent];
+    }
+
+    return parentRecords;
+  };
+
+  const guardianMatchesStudent = (guardian, studentNamesSet) => {
+    if (!studentNamesSet || !studentNamesSet.size) return true;
+    const normalizedStudent = (guardian.student_name || "").trim().toLowerCase();
+    return normalizedStudent ? studentNamesSet.has(normalizedStudent) : false;
+  };
+
+  const buildStudentNamesSet = (parentRecords) => {
+    const set = new Set();
+    parentRecords.forEach((record) => {
+      const name = (record?.student_name || "").trim().toLowerCase();
+      if (name) set.add(name);
+    });
+    return set;
+  };
 
   useEffect(() => {
     let isMounted = true;
 
+    const fetchGuardians = async (endpoint, headers = {}) => {
+      const resp = await fetch(endpoint, { headers });
+      if (!resp.ok) {
+        throw new Error(`Guardian HTTP ${resp.status}`);
+      }
+      const payload = await resp.json();
+      if (Array.isArray(payload)) return payload;
+      if (payload && Array.isArray(payload.results)) return payload.results;
+      return [];
+    };
+
     const loadUnregistered = async () => {
+      setLoading(true);
+      setError(null);
       try {
-        const username = await AsyncStorage.getItem('username');
-        let studentId = null;
+        const token = await AsyncStorage.getItem('token');
+        const parentRecords = await fetchParentRecords();
+        const studentNamesSet = buildStudentNamesSet(parentRecords);
 
-        if (username) {
-          const parentsResp = await fetch(`${BACKEND_URL}/api/parent/`);
-          const parentsData = await parentsResp.json();
-          const parent = Array.isArray(parentsData)
-            ? parentsData.find(p => p.username === username)
-            : (parentsData && parentsData.results ? parentsData.results.find(p => p.username === username) : null);
-
-          if (parent) {
-            const studentsResp = await fetch(`${BACKEND_URL}/api/student/`);
-            let students = await studentsResp.json();
-            if (students && students.results) students = students.results;
-            if (!Array.isArray(students)) students = [];
-
-            const student = students.find(s => {
-              if (!s) return false;
-              const sParent = s.parent;
-              if (sParent == null) return false;
-              if (typeof sParent === 'object') return (sParent.id === parent.id || sParent === parent.id);
-              return sParent === parent.id;
-            });
-
-            if (student) studentId = student.id;
+        let guardians = [];
+        if (token) {
+          const headers = {
+            "Content-Type": "application/json",
+            Authorization: `Token ${token}`,
+          };
+          try {
+            guardians = await fetchGuardians(GUARDIAN_ENDPOINT, headers);
+          } catch (secureErr) {
+            console.warn("[Unregistered] authenticated guardian fetch failed", secureErr);
           }
         }
 
-        const resp = await fetch(`${BACKEND_URL}/api/guardian/`);
-        let data = await resp.json();
-        if (data && data.results) data = data.results;
-        if (!Array.isArray(data)) data = [];
+        if (!guardians.length) {
+          guardians = await fetchGuardians(GUARDIAN_PUBLIC_ENDPOINT);
+        }
 
-        const filtered = data.filter(g => {
-          if (!g) return false;
-          if (g.authorized) return false;
-          if (!studentId) return true;
-          const gStudent = g.student;
-          if (!gStudent) return false;
-          if (typeof gStudent === 'object') return (gStudent.id === studentId || gStudent === studentId);
-          return gStudent === studentId;
-        });
+        const mapped = guardians
+          .filter((g) => g && guardianMatchesStudent(g, studentNamesSet))
+          .map((g) => ({
+            id: g.id,
+            name: g.name || "Unnamed Guardian",
+            relation: g.relationship || "Guardian",
+            studentName: g.student_name || "Unknown student",
+            reason: g.contact ? `Contact: ${g.contact}` : "Awaiting approval",
+          }));
 
         if (isMounted) {
-          setUnregisteredList(filtered);
-          setLoading(false);
+          setUnregisteredList(mapped);
+          setError(mapped.length ? null : "No unregistered guardians.");
         }
       } catch (err) {
-        console.warn('Failed loading guardians', err);
+        console.warn("Failed loading guardians", err);
         if (isMounted) {
-          setError('Failed to load guardians');
+          setError(err.message || "Failed to load guardians");
+          setUnregisteredList([]);
+        }
+      } finally {
+        if (isMounted) {
           setLoading(false);
         }
       }
@@ -78,6 +176,67 @@ const Unregistered = ({ navigation }) => {
     loadUnregistered();
     return () => { isMounted = false };
   }, []);
+
+  const performGuardianAction = async (guardianId, { method = "DELETE", body } = {}) => {
+    const token = await AsyncStorage.getItem('token');
+    if (!token) throw new Error("Teacher authentication required.");
+
+    const headers = {
+      "Content-Type": "application/json",
+      Authorization: `Token ${token}`,
+    };
+
+    const response = await fetch(`${GUARDIAN_ENDPOINT}${guardianId}/`, {
+      method,
+      headers,
+      body,
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(text || `HTTP ${response.status}`);
+    }
+  };
+
+  const handleAllow = async (item) => {
+    setProcessingId(item.id);
+    try {
+      await performGuardianAction(item.id, {
+        method: "PATCH",
+        body: JSON.stringify({
+          relationship:
+            item.relation && !item.relation.toLowerCase().includes("authorized")
+              ? `${item.relation} (Authorized)`
+              : item.relation || "Authorized Guardian",
+        }),
+      });
+      Alert.alert("Success", "Guardian approved and removed from the queue.");
+      setUnregisteredList((prev) =>
+        prev.filter((guardian) => String(guardian.id) !== String(item.id))
+      );
+    } catch (err) {
+      console.warn("Failed to authorize guardian", err);
+      Alert.alert("Error", err.message || "Failed to allow guardian");
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleReject = async (item) => {
+    setProcessingId(item.id);
+    try {
+      await performGuardianAction(item.id, { method: "DELETE" });
+      Alert.alert("Removed", "Guardian request rejected successfully.");
+      setUnregisteredList((prev) =>
+        prev.filter((guardian) => String(guardian.id) !== String(item.id))
+      );
+    } catch (err) {
+      console.warn("Failed to remove guardian", err);
+      Alert.alert("Error", err.message || "Failed to reject guardian");
+    } finally {
+      setProcessingId(null);
+    }
+  };
 
   const renderItem = ({ item }) => (
     <View
@@ -92,39 +251,26 @@ const Unregistered = ({ navigation }) => {
           {item.name}
         </Text>
         <Text style={[styles.relation, { color: isDark ? "#bbb" : "#666" }]}>
-          {item.relation}
+          {item.relation} • {item.studentName}
+        </Text>
+        <Text style={[styles.reason, { color: isDark ? "#aaa" : "#777" }]}>
+          {item.reason}
         </Text>
       </View>
       <View style={styles.actions}>
         <TouchableOpacity
           style={styles.allowButton}
-          onPress={async () => {
-            try {
-                      await fetch(`${BACKEND_URL}/api/guardian/${item.id}/`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ authorized: true }),
-              });
-              setUnregisteredList(prev => prev.filter(g => String(g.id) !== String(item.id)));
-            } catch (err) {
-              console.warn('Failed to authorize guardian', err);
-              Alert.alert('Error', 'Failed to allow guardian');
-            }
-          }}
+          onPress={() => handleAllow(item)}
+          disabled={processingId === item.id}
         >
-          <Text style={styles.allowText}>Allow</Text>
+          <Text style={styles.allowText}>
+            {processingId === item.id ? "Processing..." : "Allow"}
+          </Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.rejectButton}
-          onPress={async () => {
-            try {
-              await fetch(`${BACKEND_URL}/api/guardian/${item.id}/`, { method: 'DELETE' });
-              setUnregisteredList(prev => prev.filter(g => String(g.id) !== String(item.id)));
-            } catch (err) {
-              console.warn('Failed to remove guardian', err);
-              Alert.alert('Error', 'Failed to reject guardian');
-            }
-          }}
+          onPress={() => handleReject(item)}
+          disabled={processingId === item.id}
         >
           <Text style={styles.rejectText}>Reject</Text>
         </TouchableOpacity>
@@ -137,7 +283,6 @@ const Unregistered = ({ navigation }) => {
       colors={isDark ? ["#0b0f19", "#1a1f2b"] : ["#f5f5f5", "#e0e0e0"]}
       style={styles.container}
     >
-      {/* Header */}
       <View
         style={[
           styles.header,
@@ -161,7 +306,6 @@ const Unregistered = ({ navigation }) => {
         </Text>
       </View>
 
-      {/* List */}
       {loading ? (
         <View style={{ padding: 16 }}>
           <Text style={{ color: isDark ? '#fff' : '#333' }}>Loading…</Text>
@@ -174,7 +318,9 @@ const Unregistered = ({ navigation }) => {
           contentContainerStyle={{ padding: 16 }}
           ListEmptyComponent={() => (
             <View style={{ padding: 24, alignItems: 'center' }}>
-              <Text style={{ color: isDark ? '#ddd' : '#555' }}>{error ? error : 'No unregistered guardians.'}</Text>
+              <Text style={{ color: isDark ? '#ddd' : '#555', textAlign: 'center' }}>
+                {error ? error : 'No unregistered guardians.'}
+              </Text>
             </View>
           )}
         />
@@ -211,7 +357,8 @@ const styles = StyleSheet.create({
   },
   name: { fontSize: 16, fontWeight: "600" },
   relation: { fontSize: 14 },
-  actions: { flexDirection: "row" },
+  reason: { fontSize: 13, marginTop: 4 },
+  actions: { flexDirection: "row", marginLeft: 12 },
   allowButton: {
     backgroundColor: "green",
     paddingVertical: 6,
@@ -227,10 +374,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   rejectText: { color: "#fff", fontWeight: "bold" },
-  // small spacing to keep action buttons from crowding
-  actionsSpacing: {
-    marginLeft: 8,
-  },
 });
 
 export default Unregistered;
