@@ -294,6 +294,40 @@ class ParentGuardianListView(APIView):
         serializer = ParentGuardianSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
+
+class ParentGuardianPublicListView(APIView):
+    """
+    Lightweight read-only list so clients (like the mobile app) can fetch guardians
+    by username, student LRN, or role without requiring teacher authentication.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        username = request.query_params.get('username')
+        lrn = request.query_params.get('lrn')
+        student_name = request.query_params.get('student')
+        role = request.query_params.get('role')
+        limit = request.query_params.get('limit')
+
+        queryset = ParentGuardian.objects.select_related('student', 'teacher').all()
+        if username:
+            queryset = queryset.filter(username=username)
+        if lrn:
+            queryset = queryset.filter(student__lrn=lrn)
+        if student_name:
+            queryset = queryset.filter(student__name__iexact=student_name)
+        if role:
+            queryset = queryset.filter(role__iexact=role)
+        if limit:
+            try:
+                limit_value = max(1, min(int(limit), 500))
+                queryset = queryset[:limit_value]
+            except (TypeError, ValueError):
+                logger.warning("Invalid limit param for ParentGuardianPublicListView: %s", limit)
+
+        serializer = ParentGuardianSerializer(queryset, many=True)
+        return Response(serializer.data)
+
 # new
 class ParentLoginView(APIView):
     """
