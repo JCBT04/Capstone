@@ -138,3 +138,52 @@ class ParentEvent(models.Model):
         parent_name = self.parent.name if self.parent_id else 'Unknown'
         return f"Event for {parent_name}: {self.title}"
 
+
+class ParentSchedule(models.Model):
+    DAYS_OF_WEEK = [
+        ('monday', 'Monday'),
+        ('tuesday', 'Tuesday'),
+        ('wednesday', 'Wednesday'),
+        ('thursday', 'Thursday'),
+        ('friday', 'Friday'),
+        ('saturday', 'Saturday'),
+        ('sunday', 'Sunday'),
+    ]
+
+    parent = models.ForeignKey(
+        ParentGuardian,
+        on_delete=models.CASCADE,
+        related_name='schedules',
+        blank=True,
+        null=True,
+    )
+    student = models.ForeignKey(
+        Student,
+        on_delete=models.CASCADE,
+        related_name='schedules',
+    )
+    teacher = models.ForeignKey(
+        TeacherProfile,
+        on_delete=models.CASCADE,
+        related_name='schedules',
+        blank=True,
+        null=True,
+    )
+    subject = models.CharField(max_length=150)
+    description = models.TextField(blank=True)
+    day_of_week = models.CharField(max_length=9, choices=DAYS_OF_WEEK, blank=True)
+    start_time = models.TimeField(blank=True, null=True)
+    end_time = models.TimeField(blank=True, null=True)
+    time_label = models.CharField(max_length=120, blank=True)
+    room = models.CharField(max_length=50, blank=True)
+    icon = models.CharField(max_length=64, blank=True, default='book-outline')
+    extra_data = models.JSONField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['student', 'day_of_week', 'start_time', 'subject', 'created_at']
+
+    def __str__(self):
+        student_name = self.student.name if self.student_id else 'Unknown student'
+        return f"{self.subject} - {student_name}"

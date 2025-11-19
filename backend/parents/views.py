@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
-from .models import Student, ParentGuardian, ParentNotification, ParentEvent
+from .models import Student, ParentGuardian, ParentNotification, ParentEvent, ParentSchedule
 from teacher.models import TeacherProfile
 from .serializers import (
     StudentSerializer,
@@ -18,6 +18,7 @@ from .serializers import (
     TeacherStudentsSerializer,
     ParentNotificationSerializer,
     ParentEventSerializer,
+    ParentScheduleSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -479,6 +480,64 @@ class ParentEventListCreateView(APIView):
         if serializer.is_valid():
             event = serializer.save()
             output = ParentEventSerializer(event).data
+            return Response(output, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ParentScheduleListCreateView(APIView):
+    """
+    Read/create student schedule entries.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        parent_id = request.query_params.get('parent')
+        student_id = request.query_params.get('student')
+        lrn = request.query_params.get('lrn')
+        teacher_id = request.query_params.get('teacher')
+        day = request.query_params.get('day')
+        upcoming = request.query_params.get('upcoming')
+        limit = request.query_params.get('limit')
+
+        queryset = ParentSchedule.objects.select_related('parent', 'student', 'teacher').order_by(
+            'day_of_week', 'start_time', 'subject', 'created_at'
+        )
+
+        if parent_id:
+            queryset = queryset.filter(parent_id=parent_id)
+        if student_id:
+            queryset = queryset.filter(student__pk=student_id)
+        if lrn:
+            queryset = queryset.filter(student__lrn=lrn)
+        if teacher_id:
+            queryset = queryset.filter(teacher_id=teacher_id)
+        if day:
+            queryset = queryset.filter(day_of_week__iexact=str(day).lower())
+        if upcoming and str(upcoming).lower() in ('1', 'true', 'yes'):
+            now = timezone.localtime()
+            today_day = now.strftime('%A').lower()
+            current_time = now.time()
+            queryset = queryset.filter(
+                Q(day_of_week__iexact=today_day, start_time__gte=current_time)
+                | Q(day_of_week__iexact=today_day, start_time__isnull=True)
+                | Q(day_of_week__isnull=True)
+                | Q(day_of_week='')
+            )
+        if limit:
+            try:
+                limit_value = max(1, min(int(limit), 500))
+                queryset = queryset[:limit_value]
+            except (TypeError, ValueError):
+                logger.warning("Invalid limit param for schedules: %s", limit)
+
+        serializer = ParentScheduleSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        serializer = ParentScheduleSerializer(data=request.data)
+        if serializer.is_valid():
+            schedule = serializer.save()
+            output = ParentScheduleSerializer(schedule).data
             return Response(output, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

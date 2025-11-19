@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Student, ParentGuardian, ParentNotification, ParentEvent
+from .models import Student, ParentGuardian, ParentNotification, ParentEvent, ParentSchedule
 
 @admin.register(Student)
 class StudentAdmin(admin.ModelAdmin):
@@ -107,6 +107,35 @@ class ParentEventAdmin(admin.ModelAdmin):
     fieldsets = (
         ('Event Target', {'fields': ('parent', 'student')}),
         ('Details', {'fields': ('title', 'description', 'event_type', 'scheduled_at', 'location')}),
+        ('Extra', {'fields': ('extra_data',)}),
+        ('System', {'fields': ('created_at', 'updated_at'), 'classes': ('collapse',)}),
+    )
+
+
+@admin.register(ParentSchedule)
+class ParentScheduleAdmin(admin.ModelAdmin):
+    list_display = ['id', 'student', 'subject', 'day_of_week', 'time_label', 'room', 'created_at']
+    list_filter = ['day_of_week', 'teacher', 'created_at']
+    search_fields = ['student__name', 'student__lrn', 'subject', 'room']
+    readonly_fields = ['created_at', 'updated_at']
+    autocomplete_fields = ['parent', 'student', 'teacher']
+
+    fieldsets = (
+        ('Associations', {'fields': ('student', 'parent', 'teacher')}),
+        (
+            'Schedule Details',
+            {
+                'fields': (
+                    'subject',
+                    'description',
+                    'day_of_week',
+                    ('start_time', 'end_time'),
+                    'time_label',
+                    'room',
+                    'icon',
+                )
+            },
+        ),
         ('Extra', {'fields': ('extra_data',)}),
         ('System', {'fields': ('created_at', 'updated_at'), 'classes': ('collapse',)}),
     )
