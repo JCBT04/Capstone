@@ -11,6 +11,10 @@ import { LinearGradient } from "expo-linear-gradient"; // ✅ Added gradient
 import { useTheme } from "../components/ThemeContext";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
+const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
+const PARENTS_ENDPOINT = `${BACKEND_URL}/api/parents/parents/`;
+const SCHEDULE_ENDPOINT = `${BACKEND_URL}/api/schedule/`;
 
 const Schedule = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();
@@ -52,84 +56,137 @@ const Schedule = ({ navigation }) => {
 
   const [scheduleData, setScheduleData] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState(null);
+
+  const capitalize = (value) => {
+    if (!value || typeof value !== 'string') return '';
+    return value.charAt(0).toUpperCase() + value.slice(1);
+  };
+
+  const buildTimeWindow = (start, end) => {
+    const format = (raw) => {
+      if (!raw) return null;
+      const date = new Date(`1970-01-01T${raw}`);
+      if (Number.isNaN(date.getTime())) return raw;
+      return date
+        .toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+        .replace(/^0/, '');
+    };
+    const startLabel = format(start);
+    const endLabel = format(end);
+    if (startLabel && endLabel) return `${startLabel} - ${endLabel}`;
+    return startLabel || endLabel || '';
+  };
+
+  const determineStudentLrn = async (username) => {
+    let storedParent = null;
+    try {
+      const localParent = await AsyncStorage.getItem('parent');
+      if (localParent) storedParent = JSON.parse(localParent);
+    } catch (err) {
+      console.warn('Failed to parse stored parent for schedule', err);
+    }
+    const storedLrn =
+      storedParent?.student_lrn ||
+      storedParent?.student?.lrn ||
+      storedParent?.student?.id ||
+      null;
+    if (storedLrn) {
+      return storedLrn;
+    }
+
+    if (!username) return null;
+
+    const token = await AsyncStorage.getItem('token');
+    if (!token) return null;
+
+    try {
+      const headers = {
+        'Content-Type': 'application/json',
+        Authorization: `Token ${token}`,
+      };
+      const parentsResp = await fetch(PARENTS_ENDPOINT, { headers });
+      if (!parentsResp.ok) {
+        throw new Error(`Parents HTTP ${parentsResp.status}`);
+      }
+      const parentsData = await parentsResp.json();
+      const parentsList = Array.isArray(parentsData)
+        ? parentsData
+        : parentsData?.results || [];
+      const parentRecord = parentsList.find((p) => p?.username === username);
+      if (parentRecord) {
+        return parentRecord.student_lrn || parentRecord.student || null;
+      }
+    } catch (err) {
+      console.warn('Schedule parents lookup failed', err);
+    }
+    return null;
+  };
 
   useEffect(() => {
     let isMounted = true;
 
     const loadSchedule = async () => {
+      setLoading(true);
+      setErrorMessage(null);
+
       try {
         const username = await AsyncStorage.getItem('username');
-        let studentId = null;
+        const studentLrn = await determineStudentLrn(username);
+        const query = studentLrn
+          ? `${SCHEDULE_ENDPOINT}?lrn=${encodeURIComponent(studentLrn)}`
+          : SCHEDULE_ENDPOINT;
 
-        if (username) {
-          // find parent by username
-          const parentsResp = await fetch(`${BACKEND_URL}/api/parent/`);
-          const parentsData = await parentsResp.json();
-          const parent = Array.isArray(parentsData)
-            ? parentsData.find(p => p.username === username)
-            : (parentsData && parentsData.results ? parentsData.results.find(p => p.username === username) : null);
-
-          if (parent) {
-            // fetch students and try to find a student for this parent
-            const studentsResp = await fetch(`${BACKEND_URL}/api/student/`);
-            let students = await studentsResp.json();
-            if (students && students.results) students = students.results;
-            if (!Array.isArray(students)) students = [];
-
-            const student = students.find(s => {
-              if (!s) return false;
-              const sParent = s.parent;
-              if (sParent == null) return false;
-              if (typeof sParent === 'object') return (sParent.id === parent.id || sParent === parent.id);
-              return sParent === parent.id;
-            });
-
-            if (student) studentId = student.id;
-          }
+        const resp = await fetch(query);
+        if (!resp.ok) {
+          throw new Error(`Schedule HTTP ${resp.status}`);
         }
 
-        // fetch schedules
-        const resp = await fetch(`${BACKEND_URL}/api/schedule/`);
         let schedules = await resp.json();
         if (schedules && schedules.results) schedules = schedules.results;
         if (!Array.isArray(schedules)) schedules = [];
 
-        // if we resolved a studentId, filter schedules for that student
-        if (studentId) {
-          schedules = schedules.filter(s => {
-            if (!s) return false;
-            const sStudent = s.student;
-            if (sStudent == null) return false;
-            if (typeof sStudent === 'object') return (sStudent.id === studentId || sStudent === studentId);
-            return sStudent === studentId;
-          });
-        }
+        const mapped = schedules.map((s) => {
+          const dayLabel = s.day_of_week ? capitalize(s.day_of_week) : '';
+          const timeLabel =
+            s.time_label ||
+            buildTimeWindow(s.start_time, s.end_time) ||
+            s.extra_data?.time ||
+            '';
+          const combinedTime = [dayLabel, timeLabel]
+            .filter(Boolean)
+            .join(dayLabel && timeLabel ? ' • ' : '');
 
-        const mapped = schedules.map(s => ({
-          id: s.id,
-          subject: s.subject || s.title || 'Subject',
-          time: s.time || '',
-          room: s.room || '',
-          icon: s.icon || 'book-outline',
-          // pick deterministic color based on schedule id (falls back to subject)
-          color: pickColor(s.id || s.subject || s.time),
-        }));
+          return {
+            id: s.id,
+            subject: s.subject || s.title || 'Subject',
+            time: combinedTime || 'Schedule pending',
+            room: s.room || s.extra_data?.room || 'Room not set',
+            icon: s.icon || 'book-outline',
+            color: pickColor(s.id || s.subject || s.student_lrn || s.student),
+          };
+        });
 
         if (isMounted) {
           setScheduleData(mapped);
-          setLoading(false);
         }
       } catch (err) {
         console.warn('Failed loading schedule', err);
         if (isMounted) {
           setScheduleData([]);
+          setErrorMessage('Unable to load schedule right now.');
+        }
+      } finally {
+        if (isMounted) {
           setLoading(false);
         }
       }
     };
 
     loadSchedule();
-    return () => { isMounted = false };
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const renderItem = ({ item }) => (
@@ -190,7 +247,9 @@ const Schedule = ({ navigation }) => {
         contentContainerStyle={{ padding: 16 }}
         ListEmptyComponent={!loading ? (
           <View style={{ padding: 24, alignItems: 'center' }}>
-            <Text style={{ color: isDark ? '#ddd' : '#555' }}>No schedule found.</Text>
+            <Text style={{ color: isDark ? '#ddd' : '#555', textAlign: 'center' }}>
+              {errorMessage || 'No schedule found.'}
+            </Text>
           </View>
         ) : null}
         showsVerticalScrollIndicator={false}
