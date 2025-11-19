@@ -15,6 +15,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
 const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 const PARENTS_ENDPOINT = `${BACKEND_URL}/api/parents/parents/`;
+const PARENTS_PUBLIC_ENDPOINT = `${BACKEND_URL}/api/parents/parents/public/`;
 const ALL_TEACHERS_ENDPOINT = `${BACKEND_URL}/api/parents/all-teachers-students/`;
 
 const Authorized = ({ navigation }) => {
@@ -50,26 +51,39 @@ const Authorized = ({ navigation }) => {
     return aggregated;
   };
 
+  const parseStoredParent = async () => {
+    const storedParentRaw = await AsyncStorage.getItem("parent");
+    if (!storedParentRaw) return null;
+    try {
+      return JSON.parse(storedParentRaw);
+    } catch (parseErr) {
+      console.warn("Failed parsing stored parent data", parseErr);
+      return null;
+    }
+  };
+
+  const resolveStudentFilter = (record) => {
+    if (!record || typeof record !== "object") return { lrn: null, studentName: null };
+    const studentObj = record.student && typeof record.student === "object" ? record.student : null;
+    const lrn = record.student_lrn || record.student || studentObj?.lrn || null;
+    const studentName = record.student_name || studentObj?.name || null;
+    return { lrn, studentName };
+  };
+
   const fetchAuthorized = async ({ skipLoading = false } = {}) => {
     if (!skipLoading) setLoading(true);
     setError(null);
     try {
       const token = await AsyncStorage.getItem("token");
-      const storedParentRaw = await AsyncStorage.getItem("parent");
-      let storedParent = null;
-
-      if (storedParentRaw) {
-        try {
-          storedParent = JSON.parse(storedParentRaw);
-        } catch (parseErr) {
-          console.warn("Failed parsing stored parent data", parseErr);
-        }
-      }
+      const storedParent = await parseStoredParent();
+      const username = await AsyncStorage.getItem("username");
 
       const headers = { "Content-Type": "application/json" };
       if (token) headers.Authorization = `Token ${token}`;
 
       let parentRecords = [];
+
+      const { lrn: storedLrn, studentName: storedStudentName } = resolveStudentFilter(storedParent);
 
       if (token) {
         try {
@@ -88,26 +102,70 @@ const Authorized = ({ navigation }) => {
           const fallbackPayload = await fallbackRes.json();
           parentRecords = extractParentsFromTeachers(fallbackPayload);
         }
-      } else if (storedParent?.id) {
+      } else if (storedParent) {
+        const params = [];
+        if (storedLrn) params.push(`lrn=${encodeURIComponent(String(storedLrn))}`);
+        else if (storedStudentName) params.push(`student=${encodeURIComponent(storedStudentName)}`);
+        params.push(`role=${encodeURIComponent("Guardian")}`);
+        const url = params.length
+          ? `${PARENTS_PUBLIC_ENDPOINT}?${params.join("&")}`
+          : `${PARENTS_PUBLIC_ENDPOINT}?role=Guardian`;
         try {
-          const res = await fetch(`${PARENTS_ENDPOINT}${storedParent.id}/`);
-          if (res.ok) {
-            const detail = await res.json();
-            parentRecords = Array.isArray(detail) ? detail : [detail];
-          } else {
-            parentRecords = [storedParent];
-          }
-        } catch (detailErr) {
-          console.warn("Failed fetching parent detail, using cached data", detailErr);
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`Public parents HTTP ${res.status}`);
+          const payload = await res.json();
+          parentRecords = Array.isArray(payload) ? payload : [];
+        } catch (publicErr) {
+          console.warn("Public parents fetch failed, using cached guardian record", publicErr);
           parentRecords = [storedParent];
         }
-      } else if (storedParent) {
+      }
+
+      if (!parentRecords.length && storedParent) {
         parentRecords = [storedParent];
       }
 
-      const guardiansOnly = parentRecords
+      const isTeacherSession = Boolean(token);
+      const normalizedUsername = (username || "").trim().toLowerCase();
+
+      const visibleRecords = isTeacherSession || !normalizedUsername
+        ? parentRecords
+        : parentRecords.filter((record) => {
+            const recordUsername = (record?.username || "").trim().toLowerCase();
+            if (recordUsername && recordUsername === normalizedUsername) return true;
+
+            const candidateLrn =
+              record?.student_lrn ||
+              (typeof record?.student === "object" ? record.student?.lrn : record?.student) ||
+              null;
+            if (
+              storedLrn &&
+              candidateLrn &&
+              String(candidateLrn).trim().toLowerCase() === String(storedLrn).trim().toLowerCase()
+            ) {
+              return true;
+            }
+
+            const candidateName =
+              record?.student_name ||
+              (typeof record?.student === "object" ? record.student?.name : null) ||
+              null;
+            if (
+              storedStudentName &&
+              candidateName &&
+              candidateName.trim().toLowerCase() === storedStudentName.trim().toLowerCase()
+            ) {
+              return true;
+            }
+            return false;
+          });
+
+      const guardiansOnly = visibleRecords
         .filter((record) => record && typeof record === "object")
-        .filter((record) => (record.role || "").toLowerCase() === "guardian")
+        .filter((record) => {
+          const role = (record.role || "").toLowerCase();
+          return role === "guardian" || role.includes("authorized");
+        })
         .map((record) => ({
           id: record.id ?? record.username ?? Math.random().toString(36).slice(2),
           name: record.name || "Unnamed Guardian",
@@ -117,6 +175,7 @@ const Authorized = ({ navigation }) => {
         }));
 
       setAuthorizedGuardians(guardiansOnly);
+      setError(guardiansOnly.length ? null : "No authorized guardians found.");
     } catch (err) {
       console.warn("Failed to fetch authorized guardians:", err);
       setAuthorizedGuardians([]);
@@ -149,6 +208,11 @@ const Authorized = ({ navigation }) => {
         <Text style={[styles.relation, { color: isDark ? "#bbb" : "#777" }]}>
           Relation: {item.relation}
         </Text>
+        {item.studentName ? (
+          <Text style={[styles.relation, { color: isDark ? "#bbb" : "#777" }]}>
+            Student: {item.studentName}
+          </Text>
+        ) : null}
       </View>
       <Ionicons name="checkmark-circle" size={28} color="#2ecc71" />
     </View>
@@ -159,7 +223,6 @@ const Authorized = ({ navigation }) => {
       colors={isDark ? ["#0b0f19", "#1a1f2b"] : ["#f5f5f5", "#e0e0e0"]}
       style={styles.container}
     >
-      {/* Header */}
       <View
         style={[
           styles.header,
@@ -183,7 +246,6 @@ const Authorized = ({ navigation }) => {
         </Text>
       </View>
 
-      {/* List */}
       {loading ? (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
           <ActivityIndicator size="large" color="#2ecc71" />
@@ -206,7 +268,7 @@ const Authorized = ({ navigation }) => {
           }
           ListEmptyComponent={() => (
             <View style={{ padding: 16, alignItems: 'center' }}>
-              <Text style={{ color: isDark ? '#bbb' : '#666' }}>
+              <Text style={{ color: isDark ? '#bbb' : '#666', textAlign: 'center' }}>
                 {error ? error : 'No authorized guardians found.'}
               </Text>
             </View>
