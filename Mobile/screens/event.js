@@ -14,6 +14,9 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
 const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 
+const EVENTS_ENDPOINT = `${BACKEND_URL}/api/parents/events/`;
+const PARENTS_ENDPOINT = `${BACKEND_URL}/api/parents/parents/`;
+
 const Events = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();
   const isDark = darkModeEnabled;
@@ -55,18 +58,142 @@ const Events = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  const parseStoredParent = async () => {
+    const storedParentRaw = await AsyncStorage.getItem("parent");
+    if (!storedParentRaw) return null;
+    try {
+      return JSON.parse(storedParentRaw);
+    } catch (err) {
+      console.warn("[Events] failed parsing cached parent", err);
+      return null;
+    }
+  };
+
+  const parentSnapshot = (record) => {
+    if (!record || typeof record !== "object") return null;
+    const studentObj =
+      record.student && typeof record.student === "object" ? record.student : null;
+    return {
+      parentId: record.id || record.parent || null,
+      username: record.username || null,
+      studentLrn: record.student_lrn || studentObj?.lrn || record.student || null,
+      studentName: record.student_name || studentObj?.name || null,
+    };
+  };
+
+  const determineParentContext = async () => {
+    const storedParent = await parseStoredParent();
+    if (storedParent) {
+      const snapshot = parentSnapshot(storedParent);
+      if (snapshot && (snapshot.parentId || snapshot.studentLrn || snapshot.studentName)) {
+        return snapshot;
+      }
+    }
+
+    const username = await AsyncStorage.getItem("username");
+    if (!username) return null;
+
+    const token = await AsyncStorage.getItem("token");
+    if (!token) return null;
+
+    try {
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Token ${token}`,
+      };
+      const parentsResp = await fetch(PARENTS_ENDPOINT, { headers });
+      if (!parentsResp.ok) throw new Error(`Parents HTTP ${parentsResp.status}`);
+      let payload = await parentsResp.json();
+      if (payload && payload.results) payload = payload.results;
+      if (!Array.isArray(payload)) payload = [];
+      const match = payload.find(
+        (record) => record && record.username && record.username === username
+      );
+      if (match) return parentSnapshot(match);
+    } catch (err) {
+      console.warn("[Events] determineParentContext failed", err);
+    }
+    return null;
+  };
+
+  const buildEventsQuery = (context) => {
+    if (!context) return EVENTS_ENDPOINT;
+    const params = [];
+    if (context.parentId) params.push(`parent=${encodeURIComponent(context.parentId)}`);
+    if (context.studentLrn) params.push(`lrn=${encodeURIComponent(context.studentLrn)}`);
+    return params.length ? `${EVENTS_ENDPOINT}?${params.join("&")}` : EVENTS_ENDPOINT;
+  };
+
+  const filterEventsByContext = (data, context) => {
+    if (!context) return data;
+    const parentId = context.parentId ? Number(context.parentId) : null;
+    const studentLrn = context.studentLrn ? String(context.studentLrn).toLowerCase() : null;
+    const studentName = context.studentName ? context.studentName.trim().toLowerCase() : null;
+
+    return data.filter((event) => {
+      if (!event) return false;
+
+      const eventParent = (() => {
+        if (event.parent == null) return null;
+        if (typeof event.parent === "object") return event.parent.id ?? event.parent.pk ?? null;
+        return event.parent;
+      })();
+      const parentMatches =
+        parentId != null && eventParent != null && Number(eventParent) === parentId;
+
+      const eventStudent = (() => {
+        if (event.student == null) return null;
+        if (typeof event.student === "object") {
+          return {
+            id: event.student.id ?? null,
+            lrn: event.student.lrn ?? null,
+            name: event.student.name ?? null,
+          };
+        }
+        return event.student;
+      })();
+
+      const studentLrnCandidate =
+        typeof eventStudent === "object"
+          ? eventStudent.lrn || eventStudent.id || null
+          : eventStudent;
+      const studentNameCandidate =
+        typeof eventStudent === "object" ? eventStudent.name || null : null;
+
+      const lrnMatches =
+        studentLrn &&
+        studentLrnCandidate &&
+        String(studentLrnCandidate).toLowerCase() === studentLrn;
+      const nameMatches =
+        studentName &&
+        studentNameCandidate &&
+        studentNameCandidate.trim().toLowerCase() === studentName;
+
+      const hasParentContext = parentId != null;
+      const hasStudentContext = Boolean(studentLrn || studentName);
+      const studentMatches =
+        (!studentLrn || lrnMatches) && (!studentName || nameMatches);
+
+      if (!hasParentContext && !hasStudentContext) return true;
+      if (hasParentContext && parentMatches) return true;
+      if (hasStudentContext && studentMatches) return true;
+      return false;
+    });
+  };
+
   useEffect(() => {
     let mounted = true;
 
     const loadEvents = async () => {
       try {
-        // Build headers (token optional)
+        const context = await determineParentContext();
+
         const token = await AsyncStorage.getItem("token");
         const headers = { "Content-Type": "application/json" };
         if (token) headers.Authorization = `Token ${token}`;
 
-        // Prefer parent events endpoint exposed for Render deployment
-        const resp = await fetch(`${BACKEND_URL}/api/parents/events/`, { headers });
+        const query = buildEventsQuery(context);
+        const resp = await fetch(query, { headers });
         if (!resp.ok) {
           throw new Error(`Events HTTP ${resp.status}`);
         }
@@ -77,10 +204,12 @@ const Events = ({ navigation }) => {
         if (data && data.results) data = data.results;
         if (!Array.isArray(data)) data = [];
 
+        const filtered = filterEventsByContext(data, context);
+
         if (mounted) {
-          if (Array.isArray(data) && data.length) {
+          if (Array.isArray(filtered) && filtered.length) {
             setEvents(
-              data.map((e, ix) => ({
+              filtered.map((e, ix) => ({
                 id: e.id ? String(e.id) : String(ix + 1),
                 title: e.title || e.name || 'Event',
                 date: e.date || e.start_date || e.scheduled_at || '',
