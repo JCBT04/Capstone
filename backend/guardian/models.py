@@ -19,6 +19,8 @@ class Guardian(models.Model):
         null=True,
         help_text='Guardian photo'
     )
+    # Indicates whether this guardian has been authorized by a teacher
+    is_authorized = models.BooleanField(default=False)
     timestamp = models.DateTimeField(auto_now_add=True)
     
     class Meta:

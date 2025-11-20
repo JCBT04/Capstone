@@ -1,3 +1,4 @@
+import logging
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -8,6 +9,9 @@ from .serializers import GuardianSerializer
 import base64
 from django.core.files.base import ContentFile
 from django.db.models import Q
+
+logger = logging.getLogger(__name__)
+
 
 class GuardianView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -189,6 +193,18 @@ class GuardianView(APIView):
             
             if serializer.is_valid():
                 serializer.save()
+                # If relationship indicates authorization, set is_authorized flag
+                try:
+                    rel = (serializer.validated_data.get('relationship') or serializer.instance.relationship or '')
+                except Exception:
+                    rel = None
+                if rel and 'authorized' in rel.lower():
+                    try:
+                        serializer.instance.is_authorized = True
+                        serializer.instance.save()
+                    except Exception:
+                        logger.exception('Failed to set is_authorized on guardian')
+                logger.debug('Guardian PUT: id=%s teacher=%s updated', guardian_id, getattr(teacher_profile, 'id', None))
                 return Response({
                     "message": "Guardian updated successfully",
                     "data": serializer.data
@@ -249,6 +265,7 @@ class GuardianView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as e:
+            logger.exception('Error in Guardian.patch handler')
             return Response({"error": f"Error patching guardian: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def delete(self, request, pk=None):
