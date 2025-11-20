@@ -1,4 +1,5 @@
 from django.db import models
+from django.conf import settings
 from teacher.models import TeacherProfile
 
 class Guardian(models.Model):
@@ -36,3 +37,38 @@ class Guardian(models.Model):
         if self.photo:
             return self.photo.url
         return None
+
+
+class GuardianApproval(models.Model):
+    STATUS_ALLOWED = 'allowed'
+    STATUS_DECLINED = 'declined'
+    STATUS_CHOICES = [
+        (STATUS_ALLOWED, 'Allowed'),
+        (STATUS_DECLINED, 'Declined'),
+    ]
+
+    guardian = models.ForeignKey(
+        Guardian,
+        on_delete=models.CASCADE,
+        related_name='approvals'
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+    acted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='guardian_actions'
+    )
+    reason = models.TextField(blank=True, null=True)
+    source = models.CharField(max_length=50, blank=True, null=True,
+                              help_text='Source of action (mobile/admin)')
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-timestamp']
+        verbose_name = 'Guardian Approval'
+        verbose_name_plural = 'Guardian Approvals'
+
+    def __str__(self):
+        return f"{self.guardian} - {self.status} by {self.acted_by or 'system'}"

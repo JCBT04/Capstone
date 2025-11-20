@@ -4,8 +4,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from teacher.models import TeacherProfile
-from .models import Guardian
-from .serializers import GuardianSerializer
+from .models import Guardian, GuardianApproval
+from .serializers import GuardianSerializer, GuardianApprovalSerializer
 import base64
 from django.core.files.base import ContentFile
 from django.db.models import Q
@@ -260,6 +260,42 @@ class GuardianView(APIView):
 
             if serializer.is_valid():
                 serializer.save()
+                # If the client provided an explicit action (allow/decline), record it.
+                action = (request.data.get('action') or request.data.get('status') or '').strip().lower()
+                approval_status = None
+                if action in ['allow', 'allowed', 'approve', 'approved']:
+                    approval_status = GuardianApproval.STATUS_ALLOWED
+                elif action in ['decline', 'declined', 'reject', 'rejected']:
+                    approval_status = GuardianApproval.STATUS_DECLINED
+
+                if approval_status:
+                    try:
+                        # Update guardian authorized flag accordingly
+                        serializer.instance.is_authorized = (approval_status == GuardianApproval.STATUS_ALLOWED)
+                        serializer.instance.save()
+
+                        GuardianApproval.objects.create(
+                            guardian=serializer.instance,
+                            status=approval_status,
+                            acted_by=request.user if request.user and request.user.is_authenticated else None,
+                            reason=request.data.get('reason', ''),
+                            source=request.data.get('source', 'mobile')
+                        )
+                    except Exception:
+                        logger.exception('Failed to record guardian approval')
+
+                else:
+                    # Backwards compatibility: if relationship contains 'authorized', set is_authorized
+                    try:
+                        rel = (serializer.validated_data.get('relationship') or serializer.instance.relationship or '')
+                    except Exception:
+                        rel = None
+                    if rel and 'authorized' in rel.lower():
+                        try:
+                            serializer.instance.is_authorized = True
+                            serializer.instance.save()
+                        except Exception:
+                            logger.exception('Failed to set is_authorized on guardian')
                 return Response({"message": "Guardian updated successfully", "data": serializer.data}, status=status.HTTP_200_OK)
 
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

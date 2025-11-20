@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import Guardian
+from .models import Guardian, GuardianApproval
 
 @admin.register(Guardian)
 class GuardianAdmin(admin.ModelAdmin):
@@ -68,3 +68,11 @@ class GuardianAdmin(admin.ModelAdmin):
         """Optimize queries by selecting related teacher and user"""
         qs = super().get_queryset(request)
         return qs.select_related('teacher', 'teacher__user')
+
+
+@admin.register(GuardianApproval)
+class GuardianApprovalAdmin(admin.ModelAdmin):
+    list_display = ['guardian', 'status', 'acted_by', 'timestamp', 'source']
+    list_filter = ['status', 'timestamp', 'source']
+    search_fields = ['guardian__name', 'acted_by__username', 'reason']
+    readonly_fields = ['timestamp']
