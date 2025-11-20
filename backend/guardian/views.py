@@ -201,6 +201,55 @@ class GuardianView(APIView):
                 {"error": f"Error updating guardian: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    def patch(self, request, pk=None):
+        """Partial update for an existing guardian (supports PATCH requests from mobile clients)."""
+        try:
+            # Get the teacher profile
+            try:
+                teacher_profile = TeacherProfile.objects.get(user=request.user)
+            except TeacherProfile.DoesNotExist:
+                return Response(
+                    {"error": "Teacher profile not found."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            guardian_id = pk or request.data.get('id')
+            if not guardian_id:
+                return Response({"error": "Guardian ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                guardian = Guardian.objects.get(id=guardian_id, teacher=teacher_profile)
+            except Guardian.DoesNotExist:
+                return Response({"error": "Guardian not found or you don't have permission to edit it"}, status=status.HTTP_404_NOT_FOUND)
+
+            # If photo_base64 is provided, decode and attach to request.data
+            photo_base64 = request.data.get('photo_base64')
+            if photo_base64:
+                try:
+                    if 'base64,' in photo_base64:
+                        photo_base64 = photo_base64.split('base64,')[1]
+                    photo_data = base64.b64decode(photo_base64)
+                    photo_name = f"guardian_{request.data.get('name', guardian.name).replace(' ', '_')}.jpg"
+                    request.data['photo'] = ContentFile(photo_data, name=photo_name)
+                except Exception as e:
+                    print(f"Error processing base64 photo in PATCH: {e}")
+
+            serializer = GuardianSerializer(
+                guardian,
+                data=request.data,
+                partial=True,
+                context={'request': request}
+            )
+
+            if serializer.is_valid():
+                serializer.save()
+                return Response({"message": "Guardian updated successfully", "data": serializer.data}, status=status.HTTP_200_OK)
+
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"error": f"Error patching guardian: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def delete(self, request, pk=None):
         """Delete a guardian"""
