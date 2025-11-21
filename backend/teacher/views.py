@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.decorators import api_view, permission_classes
 from .models import TeacherProfile, Attendance, Absence, Dropout, UnauthorizedPerson
+from parents.models import ParentGuardian, ParentNotification
 from .serializers import (
     TeacherProfileSerializer, 
     AttendanceSerializer,
@@ -190,7 +191,38 @@ class AttendanceView(APIView):
 
             serializer = AttendanceSerializer(data=data)
             if serializer.is_valid():
-                serializer.save(teacher=teacher_profile)
+                attendance_obj = serializer.save(teacher=teacher_profile)
+
+                # Create attendance notifications for parents of the student (if any)
+                try:
+                    lrn = getattr(attendance_obj, 'student_lrn', None)
+                    student_name = getattr(attendance_obj, 'student_name', None) or ''
+                    notif_msg = f"Attendance update for {student_name}: {attendance_obj.status} on {attendance_obj.date}"
+                    parents_qs = ParentGuardian.objects.filter(teacher=teacher_profile)
+                    if lrn:
+                        parents_qs = parents_qs.filter(student__lrn=lrn)
+                    else:
+                        parents_qs = parents_qs.filter(student__name__iexact=student_name)
+
+                    notifications = []
+                    for p in parents_qs:
+                        try:
+                            notifications.append(ParentNotification(
+                                parent=p,
+                                student=p.student,
+                                type='attendance',
+                                message=notif_msg,
+                                extra_data=json.dumps({'attendance_id': attendance_obj.id})
+                            ))
+                        except Exception:
+                            continue
+                    if notifications:
+                        ParentNotification.objects.bulk_create(notifications)
+                except Exception:
+                    # non-fatal: don't break attendance creation on notification errors
+                    import traceback
+                    print('Failed creating attendance notifications:', traceback.format_exc())
+
                 return Response(serializer.data, status=status.HTTP_201_CREATED)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -227,7 +259,37 @@ def attendance_detail(request, pk):
             )
             
             if serializer.is_valid():
-                serializer.save(teacher=teacher_profile)
+                updated_att = serializer.save(teacher=teacher_profile)
+
+                # For updates, also create/update notifications for parents
+                try:
+                    lrn = getattr(updated_att, 'student_lrn', None)
+                    student_name = getattr(updated_att, 'student_name', None) or ''
+                    notif_msg = f"Attendance updated for {student_name}: {updated_att.status} on {updated_att.date}"
+                    parents_qs = ParentGuardian.objects.filter(teacher=teacher_profile)
+                    if lrn:
+                        parents_qs = parents_qs.filter(student__lrn=lrn)
+                    else:
+                        parents_qs = parents_qs.filter(student__name__iexact=student_name)
+
+                    notifications = []
+                    for p in parents_qs:
+                        try:
+                            notifications.append(ParentNotification(
+                                parent=p,
+                                student=p.student,
+                                type='attendance',
+                                message=notif_msg,
+                                extra_data=json.dumps({'attendance_id': updated_att.id})
+                            ))
+                        except Exception:
+                            continue
+                    if notifications:
+                        ParentNotification.objects.bulk_create(notifications)
+                except Exception:
+                    import traceback
+                    print('Failed creating attendance update notifications:', traceback.format_exc())
+
                 return Response(serializer.data)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
