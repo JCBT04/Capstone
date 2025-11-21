@@ -14,7 +14,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../components/ThemeContext";
 
 // Default placeholder for Render URL
-const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com/";
+const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com/";
 
 const Login = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();
@@ -28,7 +28,9 @@ const Login = ({ navigation }) => {
   const [parentsData, setParentsData] = useState(null);
 
   const handleLogin = async () => {
-    if (!username || !password) {
+    const trimmedUsername = (username || '').trim();
+    const trimmedPassword = (password || '').trim();
+    if (!trimmedUsername || !trimmedPassword) {
       setErrorMessage("Please fill all credentials");
       return;
     }
@@ -42,35 +44,57 @@ const Login = ({ navigation }) => {
       const resp = await fetch(loginUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username: trimmedUsername, password: trimmedPassword }),
       });
 
-      const json = await resp.json().catch(() => null);
+      // Try to parse JSON body, fallback to text for diagnostics
+      let json = null;
+      let bodyText = null;
+      try {
+        json = await resp.json();
+      } catch (e) {
+        try {
+          bodyText = await resp.text();
+        } catch (ee) {
+          bodyText = null;
+        }
+      }
 
       if (!resp.ok) {
+        console.warn('[Login] teacher auth failed', resp.status, json || bodyText);
         // Attempt parent login if teacher auth failed
         const parentLoginUrl = `${DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "")}/api/parents/login/`;
         try {
           const presp = await fetch(parentLoginUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ username, password }),
+            body: JSON.stringify({ username: trimmedUsername, password: trimmedPassword }),
           });
-          const pjson = await presp.json().catch(() => null);
+          let pjson = null;
+          let ptext = null;
+          try {
+            pjson = await presp.json();
+          } catch (e) {
+            ptext = await presp.text().catch(() => null);
+          }
+          console.warn('[Login] parent login response', presp.status, pjson || ptext);
           if (presp.ok && pjson && pjson.parent) {
             // parent authenticated
-            await AsyncStorage.setItem("username", username);
+            await AsyncStorage.setItem("username", trimmedUsername);
             await AsyncStorage.setItem("parent", JSON.stringify(pjson.parent));
             setErrorMessage("");
             // If parent must change credentials on first login, navigate to forced-change screen
             if (pjson.parent.must_change_credentials) {
-              // navigate to first-login flow where both username and password must be changed
-              navigation.navigate('firstlogin', { parentId: pjson.parent.id });
+              navigation.navigate('profile', { forceChange: true });
             } else {
               navigation.navigate("home");
             }
             setLoading(false);
             return;
+          } else {
+            // If the server provided an error message, surface it
+            const serverMsg = (pjson && (pjson.error || pjson.detail)) || ptext || (json && (json.error || json.detail)) || bodyText;
+            if (serverMsg) setErrorMessage(serverMsg.toString());
           }
         } catch (e) {
           console.warn('[Login] parent login attempt failed', e);
@@ -83,7 +107,7 @@ const Login = ({ navigation }) => {
 
       // Save username and token returned by backend
       try {
-        await AsyncStorage.setItem("username", username);
+        await AsyncStorage.setItem("username", trimmedUsername);
         if (json && json.token) await AsyncStorage.setItem("token", json.token);
       } catch (e) {
         console.warn("[Login] AsyncStorage save failed", e);

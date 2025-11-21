@@ -18,9 +18,13 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useTheme } from "../components/ThemeContext";
 
 const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com";
+const FALLBACK_RENDER_BACKEND_URLS = [
+  DEFAULT_RENDER_BACKEND_URL,
+  "https://childtrack-backend.onrender.com",
+];
 const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 
-const Profile = ({ navigation }) => {
+const Profile = ({ navigation, route }) => {
   const { darkModeEnabled } = useTheme();
   const isDark = darkModeEnabled;
 
@@ -32,6 +36,7 @@ const Profile = ({ navigation }) => {
     address: "",
     username: "",
     image: null,
+    must_change: false,
   });
 
   const [loading, setLoading] = useState(true);
@@ -101,6 +106,7 @@ const Profile = ({ navigation }) => {
           address: p.address || prev.address,
           username: p.username || prev.username,
           phone: p.contact_number || prev.phone,
+          must_change: !!p.must_change_credentials,
           image: avatarUrl || prev.image,
         }));
         setLoading(false);
@@ -113,6 +119,10 @@ const Profile = ({ navigation }) => {
 
   useEffect(() => {
     fetchParent();
+    // If routed here with forceChange, open edit modal automatically
+    if (route && route.params && route.params.forceChange) {
+      setModalVisible(true);
+    }
     return () => { mountedRef.current = false; };
   }, []);
 
@@ -126,6 +136,9 @@ const Profile = ({ navigation }) => {
   const [modalVisible, setModalVisible] = useState(false);
   const [avatarModalVisible, setAvatarModalVisible] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   // Pick from gallery
   const pickImage = async () => {
@@ -281,6 +294,47 @@ const Profile = ({ navigation }) => {
               />
             </View>
 
+            {/* Password change inputs (optional) */}
+            {(profile.must_change || (route && route.params && route.params.forceChange)) && (
+              <>
+                <View style={styles.inputRow}>
+                  <Ionicons name="lock-closed-outline" size={20} color={isDark ? "#fff" : "#333"} />
+                  <TextInput
+                    style={[styles.input, { color: isDark ? "#fff" : "#000" }]}
+                    placeholder="Current password (optional)"
+                    placeholderTextColor="#999"
+                    value={currentPassword}
+                    onChangeText={setCurrentPassword}
+                    secureTextEntry
+                  />
+                </View>
+
+                <View style={styles.inputRow}>
+                  <Ionicons name="key-outline" size={20} color={isDark ? "#fff" : "#333"} />
+                  <TextInput
+                    style={[styles.input, { color: isDark ? "#fff" : "#000" }]}
+                    placeholder="New password (required for first login)"
+                    placeholderTextColor="#999"
+                    value={newPassword}
+                    onChangeText={setNewPassword}
+                    secureTextEntry
+                  />
+                </View>
+
+                <View style={styles.inputRow}>
+                  <Ionicons name="checkmark-done-outline" size={20} color={isDark ? "#fff" : "#333"} />
+                  <TextInput
+                    style={[styles.input, { color: isDark ? "#fff" : "#000" }]}
+                    placeholder="Confirm new password"
+                    placeholderTextColor="#999"
+                    value={confirmPassword}
+                    onChangeText={setConfirmPassword}
+                    secureTextEntry
+                  />
+                </View>
+              </>
+            )}
+
             <View style={styles.inputRow}>
               <Ionicons name="call-outline" size={20} color={isDark ? "#fff" : "#333"} />
               <TextInput
@@ -317,10 +371,16 @@ const Profile = ({ navigation }) => {
 
                   setSaving(true);
                   const token = await AsyncStorage.getItem("token");
-                  const endpoints = [
-                    `${BACKEND_URL}/api/parent/${profile.id}/`,
-                    `${BACKEND_URL}/api/parents/parents/${profile.id}/`,
-                  ];
+                  const endpoints = [];
+                  // Use the known correct parent detail endpoint and include reasonable fallbacks
+                  // Preferred: /api/parents/<id>/ (defined in backend/parents/urls.py)
+                  // Back-compat fallbacks: /api/parents/parent/<id>/ and /api/parent/<id>/
+                  for (const base of FALLBACK_RENDER_BACKEND_URLS) {
+                    const b = base.replace(/\/$/, "");
+                    endpoints.push(`${b}/api/parents/${profile.id}/`);
+                    endpoints.push(`${b}/api/parents/parent/${profile.id}/`);
+                    endpoints.push(`${b}/api/parent/${profile.id}/`);
+                  }
 
                   const PATCH_JSON_HEADERS = {
                     "Content-Type": "application/json",
@@ -341,6 +401,7 @@ const Profile = ({ navigation }) => {
                       address: updated.address ?? profile.address,
                       name: updated.name ?? profile.name,
                       username: updated.username ?? profile.username,
+                      must_change: updated.must_change_credentials ?? false,
                     };
                     setProfile((prev) => ({
                       ...prev,
@@ -350,6 +411,12 @@ const Profile = ({ navigation }) => {
                     }));
                     try {
                       await AsyncStorage.setItem("parent", JSON.stringify(normalized));
+                      // If username changed on the server, keep our stored username in sync
+                      if (normalized.username) {
+                        await AsyncStorage.setItem("username", normalized.username);
+                      }
+                      // Persist must_change flag for future UI decisions
+                      await AsyncStorage.setItem("parent_must_change", normalized.must_change ? "1" : "0");
                     } catch (err) {
                       console.warn("[Profile] Failed to cache parent:", err?.message || err);
                     }
@@ -382,6 +449,18 @@ const Profile = ({ navigation }) => {
                       contact_number: profile.phone || "",
                       address: profile.address || "",
                     };
+
+                    // If user provided a new password, validate and include it in payload
+                    if (newPassword) {
+                      if (newPassword !== confirmPassword) {
+                        alert('New passwords do not match');
+                        setSaving(false);
+                        return;
+                      }
+                      // include password and current_password if provided
+                      basePayload.password = newPassword;
+                      if (currentPassword) basePayload.current_password = currentPassword;
+                    }
 
                     let success = false;
                     if (isLocalImage) {
@@ -417,6 +496,7 @@ const Profile = ({ navigation }) => {
 
                     if (!success) {
                       alert("Failed to save profile. Please try again later.");
+                      return;
                     }
                   } catch (err) {
                     console.warn("Error saving profile:", err.message || err);

@@ -52,6 +52,13 @@ const LoadingScreen = ({ navigation }) => {
           target = isAuthenticated ? 'home' : 'login';
         }
 
+        // Map removed 'firstlogin' route to 'profile' and enforce first-login flow
+        if (target === 'firstlogin') target = 'profile';
+        if (isAuthenticated && parentObj && parentObj.must_change_credentials) {
+          // Force profile for parents who must change credentials
+          target = 'profile';
+        }
+
         const elapsed = Date.now() - start;
         const wait = Math.max(0, MIN_DISPLAY_MS - elapsed);
         if (!mounted) return;

@@ -19,7 +19,6 @@ import Setting from './screens/setting'
 import { ThemeProvider } from "./components/ThemeContext";
 import Profile from './screens/profile'
 import ChangePass from './screens/changepass'
-import FirstLogin from './screens/firstlogin'
 
 
 
@@ -69,7 +68,7 @@ export default function App() {
         <Stack.Screen name="setting" component={Setting} />
         <Stack.Screen name="profile" component={Profile} />
         <Stack.Screen name="changepass" component={ChangePass} />
-        <Stack.Screen name="firstlogin" component={FirstLogin} />
+        {/* firstlogin removed - credential changes handled in Profile screen */}
 
 
         {/* Later you can add: <Stack.Screen name="Home" component={Home} /> */}

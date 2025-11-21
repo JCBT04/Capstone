@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert, RefreshControl } from "react-native";
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert, RefreshControl, Image } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient"; 
 import { useTheme } from "../components/ThemeContext";
@@ -161,13 +161,24 @@ const Unregistered = ({ navigation }) => {
 
       const mapped = guardians
         .filter((g) => g && guardianMatchesStudent(g, studentNamesSet))
-        .map((g) => ({
-          id: g.id,
-          name: g.name || "Unnamed Guardian",
-          relation: g.relationship || "Guardian",
-          studentName: g.student_name || "Unknown student",
-          reason: g.contact ? `Contact: ${g.contact}` : "Awaiting approval",
-        }));
+        .map((g) => {
+          let photo = null;
+          try {
+            if (g.photo) {
+              photo = g.photo.startsWith("http") ? g.photo : `${BACKEND_URL}${g.photo}`;
+            }
+          } catch (e) {
+            photo = null;
+          }
+          return {
+            id: g.id,
+            name: g.name || "Unnamed Guardian",
+            relation: g.relationship || "Guardian",
+            studentName: g.student_name || "Unknown student",
+            reason: g.contact ? `Contact: ${g.contact}` : "Awaiting approval",
+            photo,
+          };
+        });
 
       setUnregisteredList(mapped);
       setError(mapped.length ? null : "No unregistered guardians.");
@@ -259,13 +270,17 @@ const Unregistered = ({ navigation }) => {
   };
 
   const renderItem = ({ item }) => (
-    <View
-      style={[
-        styles.card,
-        { backgroundColor: isDark ? "#1e1e1e" : "#fff" },
-      ]}
-    >
-      <Ionicons name="person-circle-outline" size={40} color="#3498db" />
+      <View
+        style={[
+          styles.card,
+          { backgroundColor: isDark ? "#1e1e1e" : "#fff" },
+        ]}
+      >
+      {item.photo ? (
+        <Image source={{ uri: item.photo }} style={styles.guardianPhoto} />
+      ) : (
+        <Ionicons name="person-circle-outline" size={40} color="#3498db" />
+      )}
       <View style={{ flex: 1, marginLeft: 12 }}>
         <Text style={[styles.name, { color: isDark ? "#fff" : "#333" }]}>
           {item.name}
@@ -403,6 +418,12 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   rejectText: { color: "#fff", fontWeight: "bold" },
+  guardianPhoto: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#ccc',
+  },
 });
 
 export default Unregistered;
