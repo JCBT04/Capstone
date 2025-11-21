@@ -59,9 +59,9 @@ export default function App() {
         <Stack.Screen name="fpass" component={FPass} />
         <Stack.Screen name="home" component={Home} />
         <Stack.Screen name="event" component={Event} />
-        <Stack.Screen name="attendance" component={Attendance} />
+        {/* Attendance is teacher-only; removed for parent-only mobile app */}
         <Stack.Screen name="schedule" component={Schedule} />
-        <Stack.Screen name="unregistered" component={Unregistered} />
+        {/* Unregistered is teacher-only; removed for parent-only mobile app */}
         <Stack.Screen name="authorized" component={Authorized} />
         <Stack.Screen name="unauthorized" component={Unauthorized} />
         <Stack.Screen name="notification" component={Notification} />

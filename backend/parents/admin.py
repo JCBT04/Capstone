@@ -1,6 +1,5 @@
 from django.contrib import admin
-
-from .models import Student, ParentGuardian, ParentNotification, ParentEvent, ParentSchedule
+from .models import Student, ParentGuardian, ParentMobileAccount, MobileRegistration, ParentNotification, ParentEvent, ParentSchedule
 
 @admin.register(Student)
 class StudentAdmin(admin.ModelAdmin):
@@ -39,11 +38,10 @@ class ParentGuardianAdmin(admin.ModelAdmin):
     search_fields = ['username', 'name', 'student__name', 'student__lrn', 'teacher__user__username']
     list_filter = ['role', 'teacher', 'created_at']
     readonly_fields = ['created_at', 'updated_at', 'qr_code_data']
-
+    
     fieldsets = (
         ('Personal Information', {
-            # show password as a regular editable field under Personal Information
-            'fields': ('username', 'name', 'password', 'role', 'contact_number', 'email', 'address')
+            'fields': ('username', 'name', 'password', 'role', 'contact_number', 'email', 'address', 'avatar')
         }),
         ('Relationships', {
             'fields': ('student', 'teacher')
@@ -57,7 +55,7 @@ class ParentGuardianAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
-
+    
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         # If user is not superuser, show only their parents/guardians
@@ -69,14 +67,43 @@ class ParentGuardianAdmin(admin.ModelAdmin):
                 return qs.none()
         return qs
 
-# new
+
+@admin.register(ParentMobileAccount)
+class ParentMobileAccountAdmin(admin.ModelAdmin):
+    list_display = ['user', 'parent_guardian', 'is_active', 'created_at']
+    search_fields = ['user__username', 'parent_guardian__name', 'parent_guardian__student__lrn']
+    list_filter = ['is_active', 'created_at']
+    readonly_fields = ['created_at', 'updated_at']
+    
+    fieldsets = (
+        ('Account Information', {
+            'fields': ('user', 'parent_guardian', 'is_active')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+
+@admin.register(MobileRegistration)
+class MobileRegistrationAdmin(admin.ModelAdmin):
+    list_display = ['phone_number', 'is_verified', 'created_at', 'updated_at']
+    search_fields = ['phone_number']
+    list_filter = ['is_verified', 'created_at']
+    date_hierarchy = 'created_at'
+    ordering = ['-created_at']
+    readonly_fields = ['created_at', 'updated_at']
+
+
 @admin.register(ParentNotification)
 class ParentNotificationAdmin(admin.ModelAdmin):
     list_display = ['id', 'parent', 'student', 'type', 'message_preview', 'created_at']
     list_filter = ['type', 'created_at']
     search_fields = ['parent__name', 'parent__username', 'student__name', 'student__lrn', 'message']
     readonly_fields = ['created_at']
-    autocomplete_fields = ['parent', 'student']
+    # REMOVED autocomplete_fields - using raw_id_fields instead
+    raw_id_fields = ['parent', 'student']
 
     fieldsets = (
         ('Notification Target', {
@@ -95,14 +122,15 @@ class ParentNotificationAdmin(admin.ModelAdmin):
         return (obj.message[:50] + '...') if obj.message and len(obj.message) > 50 else obj.message
     message_preview.short_description = 'Message'
 
-# new
+
 @admin.register(ParentEvent)
 class ParentEventAdmin(admin.ModelAdmin):
     list_display = ['id', 'parent', 'title', 'event_type', 'scheduled_at', 'created_at']
     list_filter = ['event_type', 'scheduled_at', 'created_at']
     search_fields = ['parent__name', 'parent__username', 'student__name', 'title', 'description']
     readonly_fields = ['created_at', 'updated_at']
-    autocomplete_fields = ['parent', 'student']
+    # REMOVED autocomplete_fields - using raw_id_fields instead
+    raw_id_fields = ['parent', 'student']
 
     fieldsets = (
         ('Event Target', {'fields': ('parent', 'student')}),
@@ -118,7 +146,8 @@ class ParentScheduleAdmin(admin.ModelAdmin):
     list_filter = ['day_of_week', 'teacher', 'created_at']
     search_fields = ['student__name', 'student__lrn', 'subject', 'room']
     readonly_fields = ['created_at', 'updated_at']
-    autocomplete_fields = ['parent', 'student', 'teacher']
+    # REMOVED autocomplete_fields - using raw_id_fields instead
+    raw_id_fields = ['parent', 'student', 'teacher']
 
     fieldsets = (
         ('Associations', {'fields': ('student', 'parent', 'teacher')}),

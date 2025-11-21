@@ -139,6 +139,9 @@ const Profile = ({ navigation, route }) => {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   // Pick from gallery
   const pickImage = async () => {
@@ -305,8 +308,11 @@ const Profile = ({ navigation, route }) => {
                     placeholderTextColor="#999"
                     value={currentPassword}
                     onChangeText={setCurrentPassword}
-                    secureTextEntry
+                    secureTextEntry={!showCurrentPassword}
                   />
+                  <TouchableOpacity onPress={() => setShowCurrentPassword((s) => !s)} style={{ paddingHorizontal: 8 }}>
+                    <Ionicons name={showCurrentPassword ? "eye" : "eye-off"} size={20} color={isDark ? "#fff" : "#333"} />
+                  </TouchableOpacity>
                 </View>
 
                 <View style={styles.inputRow}>
@@ -317,8 +323,11 @@ const Profile = ({ navigation, route }) => {
                     placeholderTextColor="#999"
                     value={newPassword}
                     onChangeText={setNewPassword}
-                    secureTextEntry
+                    secureTextEntry={!showNewPassword}
                   />
+                  <TouchableOpacity onPress={() => setShowNewPassword((s) => !s)} style={{ paddingHorizontal: 8 }}>
+                    <Ionicons name={showNewPassword ? "eye" : "eye-off"} size={20} color={isDark ? "#fff" : "#333"} />
+                  </TouchableOpacity>
                 </View>
 
                 <View style={styles.inputRow}>
@@ -329,8 +338,11 @@ const Profile = ({ navigation, route }) => {
                     placeholderTextColor="#999"
                     value={confirmPassword}
                     onChangeText={setConfirmPassword}
-                    secureTextEntry
+                    secureTextEntry={!showConfirmPassword}
                   />
+                  <TouchableOpacity onPress={() => setShowConfirmPassword((s) => !s)} style={{ paddingHorizontal: 8 }}>
+                    <Ionicons name={showConfirmPassword ? "eye" : "eye-off"} size={20} color={isDark ? "#fff" : "#333"} />
+                  </TouchableOpacity>
                 </View>
               </>
             )}
@@ -368,6 +380,8 @@ const Profile = ({ navigation, route }) => {
                     console.warn("No parent id available to save");
                     return;
                   }
+                  // Determine whether this save is part of a forced first-login change
+                  const wasForced = !!((route && route.params && route.params.forceChange) || profile.must_change);
 
                   setSaving(true);
                   const token = await AsyncStorage.getItem("token");
@@ -391,7 +405,7 @@ const Profile = ({ navigation, route }) => {
                     ...(token ? { Authorization: `Token ${token}` } : {}),
                   };
 
-                  const updateLocalState = async (updated) => {
+                    const updateLocalState = async (updated) => {
                     const avatarUrl = updated.avatar
                       ? (updated.avatar.startsWith("http") ? updated.avatar : `${BACKEND_URL}${updated.avatar}`)
                       : null;
@@ -411,14 +425,30 @@ const Profile = ({ navigation, route }) => {
                     }));
                     try {
                       await AsyncStorage.setItem("parent", JSON.stringify(normalized));
-                      // If username changed on the server, keep our stored username in sync
                       if (normalized.username) {
                         await AsyncStorage.setItem("username", normalized.username);
                       }
-                      // Persist must_change flag for future UI decisions
                       await AsyncStorage.setItem("parent_must_change", normalized.must_change ? "1" : "0");
                     } catch (err) {
                       console.warn("[Profile] Failed to cache parent:", err?.message || err);
+                    }
+
+                    // If this save was a forced first-login change, clear session and require re-login
+                    if (wasForced) {
+                      try {
+                        await AsyncStorage.removeItem('token');
+                        await AsyncStorage.removeItem('parent');
+                        await AsyncStorage.removeItem('username');
+                        await AsyncStorage.removeItem('parent_must_change');
+                      } catch (err) {
+                        console.warn('[Profile] Failed to clear session after forced change', err);
+                      }
+                      setModalVisible(false);
+                      // Navigate back to login so the user can sign in with new credentials
+                      setTimeout(() => {
+                        try { navigation.replace('login'); } catch(e) { navigation.navigate('login'); }
+                      }, 250);
+                      return;
                     }
                     setModalVisible(false);
                   };

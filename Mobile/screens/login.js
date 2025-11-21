@@ -39,78 +39,47 @@ const Login = ({ navigation }) => {
     setErrorMessage("");
 
     try {
-      // Authenticate against the backend login endpoint
-      const loginUrl = `${DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "")}/api/login/`;
-      const resp = await fetch(loginUrl, {
+      // Parent-only mobile: authenticate against the Parent login endpoint
+      const parentLoginUrl = `${DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "")}/api/parents/login/`;
+      const presp = await fetch(parentLoginUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: trimmedUsername, password: trimmedPassword }),
       });
-
-      // Try to parse JSON body, fallback to text for diagnostics
-      let json = null;
-      let bodyText = null;
+      let pjson = null;
       try {
-        json = await resp.json();
+        pjson = await presp.json();
       } catch (e) {
-        try {
-          bodyText = await resp.text();
-        } catch (ee) {
-          bodyText = null;
-        }
+        pjson = null;
       }
 
-      if (!resp.ok) {
-        console.warn('[Login] teacher auth failed', resp.status, json || bodyText);
-        // Attempt parent login if teacher auth failed
-        const parentLoginUrl = `${DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "")}/api/parents/login/`;
-        try {
-          const presp = await fetch(parentLoginUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ username: trimmedUsername, password: trimmedPassword }),
-          });
-          let pjson = null;
-          let ptext = null;
-          try {
-            pjson = await presp.json();
-          } catch (e) {
-            ptext = await presp.text().catch(() => null);
-          }
-          console.warn('[Login] parent login response', presp.status, pjson || ptext);
-          if (presp.ok && pjson && pjson.parent) {
-            // parent authenticated
-            await AsyncStorage.setItem("username", trimmedUsername);
-            await AsyncStorage.setItem("parent", JSON.stringify(pjson.parent));
-            setErrorMessage("");
-            // If parent must change credentials on first login, navigate to forced-change screen
-            if (pjson.parent.must_change_credentials) {
-              navigation.navigate('profile', { forceChange: true });
-            } else {
-              navigation.navigate("home");
-            }
-            setLoading(false);
-            return;
-          } else {
-            // If the server provided an error message, surface it
-            const serverMsg = (pjson && (pjson.error || pjson.detail)) || ptext || (json && (json.error || json.detail)) || bodyText;
-            if (serverMsg) setErrorMessage(serverMsg.toString());
-          }
-        } catch (e) {
-          console.warn('[Login] parent login attempt failed', e);
-        }
-
-        setErrorMessage("Wrong username or password");
+      console.warn('[Login] parent login response', presp.status, pjson);
+      if (!presp.ok) {
+        const serverMsg = (pjson && (pjson.error || pjson.detail)) || `HTTP ${presp.status}`;
+        setErrorMessage(serverMsg.toString());
         setLoading(false);
         return;
       }
 
-      // Save username and token returned by backend
-      try {
+      if (pjson && pjson.parent) {
+        // Save parent info and username
         await AsyncStorage.setItem("username", trimmedUsername);
-        if (json && json.token) await AsyncStorage.setItem("token", json.token);
-      } catch (e) {
-        console.warn("[Login] AsyncStorage save failed", e);
+        await AsyncStorage.setItem("parent", JSON.stringify(pjson.parent));
+        // Persist must-change flag for UI
+        if (pjson.parent.must_change_credentials) {
+          await AsyncStorage.setItem('parent_must_change', '1');
+        } else {
+          await AsyncStorage.removeItem('parent_must_change');
+        }
+
+        setErrorMessage("");
+        if (pjson.parent.must_change_credentials) {
+          navigation.navigate('profile', { forceChange: true });
+        } else {
+          navigation.navigate('home');
+        }
+        setLoading(false);
+        return;
       }
 
       // Fetch parents (authenticated)

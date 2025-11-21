@@ -2,20 +2,27 @@ import logging
 import json
 from django.db import transaction
 from django.db.models import Prefetch, Q
-from django.utils import timezone
+from django.contrib.auth import authenticate
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.authtoken.models import Token
+
+from django.utils import timezone
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
-from .models import Student, ParentGuardian, ParentNotification, ParentEvent, ParentSchedule
+from .models import Student, ParentGuardian, ParentMobileAccount, ParentNotification, ParentEvent, ParentSchedule
+
 from teacher.models import TeacherProfile
 from .serializers import (
     StudentSerializer,
     ParentGuardianSerializer,
     RegistrationSerializer,
     TeacherStudentsSerializer,
+    ParentMobileAccountSerializer,
+    ParentMobileRegistrationSerializer,
+    ParentMobileLoginSerializer,
     ParentNotificationSerializer,
     ParentEventSerializer,
     ParentScheduleSerializer,
@@ -24,7 +31,6 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 
 import traceback
-# passwords are no longer handled for ParentGuardian records
 
 
 class StandardPagination(PageNumberPagination):
@@ -89,8 +95,6 @@ def _perform_registration(data, request_user=None):
                 "name": data["parent2_name"],
                 "contact": data.get("parent2_contact", ""),
                 "email": data.get("parent2_email", ""),
-                "username": data.get("parent2_username", ""),
-                "password": data.get("parent2_password", ""),
             }
         )
     if data.get("guardian_name"):
@@ -100,8 +104,6 @@ def _perform_registration(data, request_user=None):
                 "name": data["guardian_name"],
                 "contact": data.get("guardian_contact", ""),
                 "email": data.get("guardian_email", ""),
-                "username": data.get("guardian_username", ""),
-                "password": data.get("guardian_password", ""),
             }
         )
 
@@ -115,34 +117,13 @@ def _perform_registration(data, request_user=None):
             "name": parent_data["name"],
         }
 
-        # Store password as provided (plain text) per user request
-        # If username or password not provided, generate defaults per requirements:
-        # default username = last name of the provided parent name
-        # default password = <username> + '123'
-        provided_username = (parent_data.get("username") or "").strip()
-        provided_password = (parent_data.get("password") or "").strip()
-
-        if not provided_username:
-            # derive last name as last token of the name
-            name_parts = (parent_data.get("name") or "").strip().split()
-            derived_username = name_parts[-1] if len(name_parts) else "parent"
-            provided_username = derived_username
-
-        if not provided_password:
-            provided_password = f"{provided_username}123"
-
-        # determine whether credentials were auto-generated (require change on first login)
-        must_change = (not bool(parent_data.get("username"))) or (not bool(parent_data.get("password")))
-
-
         pg = ParentGuardian.objects.create(
             student=student,
             teacher=teacher,
             name=parent_data["name"],
             role=parent_data["role"],
-            username=provided_username,
-            password=provided_password,
-            must_change_credentials=must_change,
+            username=parent_data.get("username", ""),
+            password=parent_data.get("password", ""),
             contact_number=parent_data["contact"],
             email=parent_data["email"],
             address=data.get("address", ""),
@@ -157,28 +138,18 @@ class RegistrationView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        serializer = RegistrationSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
         try:
-            data = serializer.validated_data
-            with transaction.atomic():
-                student, created_records, created_flag = _perform_registration(data, request_user=request.user)
-
-            response = {
-                "message": "Registration successful!",
-                "status": "created" if created_flag else "updated",
-                "student": StudentSerializer(student).data,
-                "parents_guardians": ParentGuardianSerializer(created_records, many=True).data,
-            }
-            return Response(response, status=status.HTTP_201_CREATED if created_flag else status.HTTP_200_OK)
-        except ValueError as ve:
-            logger.warning("Registration validation/lookup error: %s", str(ve))
-            return Response({"error": str(ve)}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as exc:
-            logger.exception("Registration failed")
-            return Response({"error": f"Registration failed: {str(exc)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            print("🔹 Incoming data:", json.dumps(request.data, indent=2))
+            serializer = RegistrationSerializer(data=request.data)
+            if serializer.is_valid():
+                result = serializer.save()
+                return Response(result, status=status.HTTP_201_CREATED)
+            print("❌ Serializer errors:", serializer.errors)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            print("❌ SERVER ERROR:", e)
+            traceback.print_exc()
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class AuthenticatedStudentRegistrationView(APIView):
@@ -298,21 +269,148 @@ class ParentGuardianListView(APIView):
     pagination_class = StandardPagination
 
     def get(self, request):
-        lrn = request.query_params.get('lrn')
         try:
             teacher = TeacherProfile.objects.get(user=request.user)
+            qs = ParentGuardian.objects.filter(teacher=teacher)
+            
+            # Optional LRN filter
+            lrn = request.query_params.get('lrn')
+            if lrn:
+                qs = qs.filter(student__lrn=lrn)
+            
+            paginator = self.pagination_class()
+            page = paginator.paginate_queryset(qs, request)
+            serializer = ParentGuardianSerializer(page, many=True)
+            return paginator.get_paginated_response(serializer.data)
         except TeacherProfile.DoesNotExist:
             return Response({"error": "Teacher profile not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        if lrn:
-            qs = ParentGuardian.objects.filter(teacher=teacher, student__lrn=lrn)
-        else:
-            qs = ParentGuardian.objects.filter(teacher=teacher)
 
-        paginator = self.pagination_class()
-        page = paginator.paginate_queryset(qs, request)
-        serializer = ParentGuardianSerializer(page, many=True)
-        return paginator.get_paginated_response(serializer.data)
+class StudentDetailView(APIView):
+    """
+    Get details for a single student (must belong to authenticated teacher).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, lrn):
+        try:
+            teacher = TeacherProfile.objects.get(user=request.user)
+            student = Student.objects.get(lrn=lrn, teacher=teacher)
+        except TeacherProfile.DoesNotExist:
+            return Response({"error": "Teacher profile not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Student.DoesNotExist:
+            return Response({"error": "Student not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        parents = ParentGuardian.objects.filter(student=student)
+        response_data = {
+            "student": StudentSerializer(student).data,
+            "parents_guardians": ParentGuardianSerializer(parents, many=True).data,
+        }
+        return Response(response_data)
+
+
+class AllTeachersStudentsView(APIView):
+    """
+    Admin view: return all teachers with their students (prefetched).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        teachers = TeacherProfile.objects.prefetch_related(
+            Prefetch('students', queryset=Student.objects.prefetch_related('parents_guardians')),
+            'parents_guardians'
+        )
+        serializer = TeacherStudentsSerializer(teachers, many=True)
+        return Response(serializer.data)
+
+
+class ParentMobileRegistrationView(APIView):
+    """
+    Register a parent/guardian for mobile app access
+    Endpoint: /api/parents/mobile/register/
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = ParentMobileRegistrationSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            with transaction.atomic():
+                mobile_account = serializer.save()
+                
+                # Generate auth token
+                token, created = Token.objects.get_or_create(user=mobile_account.user)
+                
+                response_data = {
+                    "message": "Mobile account created successfully!",
+                    "account": ParentMobileAccountSerializer(mobile_account).data,
+                    "token": token.key
+                }
+                return Response(response_data, status=status.HTTP_201_CREATED)
+        except Exception as exc:
+            logger.exception("Mobile registration failed")
+            return Response({"error": f"Registration failed: {str(exc)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ParentMobileLoginView(APIView):
+    """
+    Login endpoint for parent mobile app
+    Endpoint: /api/parents/mobile/login/
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = ParentMobileLoginSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        username = serializer.validated_data['username']
+        password = serializer.validated_data['password']
+
+        user = authenticate(username=username, password=password)
+        
+        if user is None:
+            return Response({"error": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        # Check if user has a parent mobile account
+        try:
+            mobile_account = ParentMobileAccount.objects.get(user=user)
+            if not mobile_account.is_active:
+                return Response({"error": "Account is inactive"}, status=status.HTTP_403_FORBIDDEN)
+        except ParentMobileAccount.DoesNotExist:
+            return Response({"error": "Not a parent mobile account"}, status=status.HTTP_403_FORBIDDEN)
+
+        # Get or create token
+        token, created = Token.objects.get_or_create(user=user)
+
+        response_data = {
+            "message": "Login successful",
+            "token": token.key,
+            "account": ParentMobileAccountSerializer(mobile_account).data
+        }
+        return Response(response_data, status=status.HTTP_200_OK)
+
+
+class ParentsByLRNView(APIView):
+    """
+    Get parents/guardians by student LRN (for mobile registration)
+    Endpoint: /api/parents/by-lrn/<lrn>/
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, lrn):
+        try:
+            student = Student.objects.get(lrn=lrn)
+            parents = ParentGuardian.objects.filter(student=student)
+            serializer = ParentGuardianSerializer(parents, many=True)
+            return Response({
+                "student": StudentSerializer(student).data,
+                "parents_guardians": serializer.data
+            })
+        except Student.DoesNotExist:
+            return Response({"error": "Student not found"}, status=status.HTTP_404_NOT_FOUND)
 
 
 class ParentGuardianPublicListView(APIView):
@@ -348,7 +446,7 @@ class ParentGuardianPublicListView(APIView):
         serializer = ParentGuardianSerializer(queryset, many=True)
         return Response(serializer.data)
 
-# new
+
 class ParentLoginView(APIView):
     """
     Simple login for Parent/Guardian records stored in ParentGuardian model.
@@ -377,7 +475,7 @@ class ParentLoginView(APIView):
         serializer = ParentGuardianSerializer(pg)
         return Response({"parent": serializer.data}, status=status.HTTP_200_OK)
 
-# new
+
 class ParentDetailView(APIView):
     """Retrieve or partially update a ParentGuardian by primary key.
 
@@ -469,14 +567,18 @@ class ParentDetailView(APIView):
                 avatar_path = None
             logger.debug('Parent saved. avatar.name=%s avatar.path=%s', avatar_name, avatar_path)
             print(f"[ParentDetailView] parent.save() completed. avatar.name={avatar_name} avatar.path={avatar_path}")
+        else:
+            avatar_name = None
+            avatar_path = None
+            
         serializer = ParentGuardianSerializer(parent, context={'request': request})
-        debug_info = {'updated': updated, 'avatar_name': avatar_name if updated else None, 'avatar_path': avatar_path if updated else None}
+        debug_info = {'updated': updated, 'avatar_name': avatar_name, 'avatar_path': avatar_path}
         # Return serializer data at top-level (keeps previous client expectations) and include debug info
         response_data = dict(serializer.data)
         response_data['debug'] = debug_info
         return Response(response_data)
 
-# new
+
 class ParentNotificationListCreateView(APIView):
     """
     Read/create notifications tied to ParentGuardian records.
@@ -511,58 +613,188 @@ class ParentNotificationListCreateView(APIView):
             return Response(output, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-# new
+
 class ParentEventListCreateView(APIView):
     """
-    Read/create events tied to ParentGuardian records.
+    Announcements API for teachers to create and parents/mobile app to fetch.
+    
+    Teachers POST: Create announcements visible to all their students' parents
+    Parents/Mobile GET: Fetch announcements from their student's teacher
+    Endpoint: /api/parents/events/
     """
-    permission_classes = [permissions.AllowAny]
+    
+    def get_permissions(self):
+        """GET requests: allow unauthenticated (for mobile app flexibility)
+           POST requests: require authenticated teacher only"""
+        if self.request.method == 'GET':
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated()]
 
     def get(self, request):
+        """
+        Fetch announcements/events
+        Query params:
+        - teacher_id: Filter by specific teacher
+        - lrn: Filter by student LRN (parents only)
+        - parent_id: Filter by parent (parents only)
+        - upcoming: Show only future events (1/true/yes)
+        - limit: Max number of results (default 200)
+        """
+        queryset = ParentEvent.objects.select_related(
+            'teacher', 'parent', 'student'
+        ).order_by('-scheduled_at', '-created_at')
+
+        # If authenticated user is a parent, automatically filter to their teacher
+        user = request.user
+        if user and user.is_authenticated:
+            try:
+                parent = ParentGuardian.objects.get(user=user)
+                # Parent only sees announcements from their student's teacher
+                queryset = queryset.filter(teacher=parent.teacher)
+                logger.info(f"Parent {parent.id} viewing events from teacher {parent.teacher.id}")
+            except ParentGuardian.DoesNotExist:
+                # If not a parent, don't auto-filter (teachers can see all)
+                logger.info(f"User {user.id} authenticated but not a parent - showing all events")
+                pass
+
+        # Optional filters
+        teacher_id = request.query_params.get('teacher_id')
         parent_id = request.query_params.get('parent')
         lrn = request.query_params.get('lrn')
-        limit = request.query_params.get('limit')
         upcoming = request.query_params.get('upcoming')
+        limit = request.query_params.get('limit')
 
-        logger.debug(
-            "ParentEventListCreateView.get called parent=%s lrn=%s limit=%s upcoming=%s",
-            parent_id,
-            lrn,
-            limit,
-            upcoming,
-        )
-
-        queryset = ParentEvent.objects.select_related('parent', 'student').order_by('-scheduled_at', '-created_at')
+        if teacher_id:
+            queryset = queryset.filter(teacher_id=teacher_id)
+        
         if parent_id:
-            queryset = queryset.filter(parent_id=parent_id)
+            queryset = queryset.filter(Q(parent_id=parent_id) | Q(parent__isnull=True))
+        
         if lrn:
-            queryset = queryset.filter(student__lrn=lrn)
+            queryset = queryset.filter(Q(student__lrn=lrn) | Q(student__isnull=True))
+        
         if upcoming and str(upcoming).lower() in ('1', 'true', 'yes'):
             now = timezone.now()
-            queryset = queryset.filter(
-                Q(scheduled_at__gte=now) | Q(scheduled_at__isnull=True)
-            )
+            queryset = queryset.filter(scheduled_at__gte=now)
+        
         if limit:
             try:
-                limit_value = max(1, min(int(limit), 200))
+                limit_value = max(1, min(int(limit), 500))
                 queryset = queryset[:limit_value]
             except (TypeError, ValueError):
                 logger.warning("Invalid limit param for events: %s", limit)
 
         serializer = ParentEventSerializer(queryset, many=True)
-        logger.debug(
-            "ParentEventListCreateView returning %s events",
-            len(serializer.data)
-        )
         return Response(serializer.data)
 
     def post(self, request):
+        """
+        Create announcement (teachers only)
+        
+        Required fields:
+        - title: Announcement title
+        - description: Announcement content
+        - event_type: Type (e.g. 'Announcement', 'Alert', 'Reminder')
+        - scheduled_at: ISO datetime when to publish
+        
+        Optional:
+        - parent_id: Target specific parent (null = all parents)
+        - student_id: Target specific student (null = all students)
+        - location: Physical location (if applicable)
+        """
+        try:
+            teacher = TeacherProfile.objects.get(user=request.user)
+        except TeacherProfile.DoesNotExist:
+            return Response(
+                {"error": "Only teachers can create announcements"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         serializer = ParentEventSerializer(data=request.data)
         if serializer.is_valid():
-            event = serializer.save()
+            # Automatically set the teacher and ensure it's broadcast to all parents
+            event = serializer.save(
+                teacher=teacher,
+                parent=None,  # Broadcast to all parents of this teacher's students
+            )
+            logger.info(f"Teacher {teacher.id} created announcement: {event.title}")
             output = ParentEventSerializer(event).data
             return Response(output, status=status.HTTP_201_CREATED)
+        
+        logger.warning(f"Announcement creation failed with errors: {serializer.errors}")
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ParentEventDetailView(APIView):
+    """
+    Retrieve, update, or delete a specific event/announcement
+    Endpoint: /api/parents/events/{id}/
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, pk):
+        """Get single announcement"""
+        try:
+            event = ParentEvent.objects.select_related('teacher', 'parent', 'student').get(pk=pk)
+        except ParentEvent.DoesNotExist:
+            return Response({"error": "Announcement not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ParentEventSerializer(event)
+        return Response(serializer.data)
+
+    def patch(self, request, pk):
+        """Update announcement (teachers only)"""
+        try:
+            event = ParentEvent.objects.get(pk=pk)
+        except ParentEvent.DoesNotExist:
+            return Response({"error": "Announcement not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Only the teacher who created it can update
+        try:
+            teacher = TeacherProfile.objects.get(user=request.user)
+            if event.teacher != teacher:
+                return Response(
+                    {"error": "You can only update your own announcements"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        except TeacherProfile.DoesNotExist:
+            return Response(
+                {"error": "Only teachers can update announcements"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        serializer = ParentEventSerializer(event, data=request.data, partial=True)
+        if serializer.is_valid():
+            updated_event = serializer.save()
+            logger.info(f"Teacher {teacher.id} updated announcement: {updated_event.title}")
+            return Response(serializer.data)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk):
+        """Delete announcement (teachers only)"""
+        try:
+            event = ParentEvent.objects.get(pk=pk)
+        except ParentEvent.DoesNotExist:
+            return Response({"error": "Announcement not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Only the teacher who created it can delete
+        try:
+            teacher = TeacherProfile.objects.get(user=request.user)
+            if event.teacher != teacher:
+                return Response(
+                    {"error": "You can only delete your own announcements"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        except TeacherProfile.DoesNotExist:
+            return Response(
+                {"error": "Only teachers can delete announcements"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        logger.info(f"Teacher {teacher.id} deleted announcement: {event.title}")
+        event.delete()
+        return Response({"message": "Announcement deleted successfully"}, status=status.HTTP_204_NO_CONTENT)
 
 
 class ParentScheduleListCreateView(APIView):
@@ -621,41 +853,3 @@ class ParentScheduleListCreateView(APIView):
             output = ParentScheduleSerializer(schedule).data
             return Response(output, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-# new
-class StudentDetailView(APIView):
-    """
-    Get details for a single student (must belong to authenticated teacher).
-    """
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get(self, request, lrn):
-        try:
-            teacher = TeacherProfile.objects.get(user=request.user)
-            student = Student.objects.get(lrn=lrn, teacher=teacher)
-        except TeacherProfile.DoesNotExist:
-            return Response({"error": "Teacher profile not found"}, status=status.HTTP_404_NOT_FOUND)
-        except Student.DoesNotExist:
-            return Response({"error": "Student not found"}, status=status.HTTP_404_NOT_FOUND)
-
-        parents = ParentGuardian.objects.filter(student=student)
-        response_data = {
-            "student": StudentSerializer(student).data,
-            "parents_guardians": ParentGuardianSerializer(parents, many=True).data,
-        }
-        return Response(response_data)
-
-
-class AllTeachersStudentsView(APIView):
-    """
-    Admin view: return all teachers with their students (prefetched).
-    """
-    permission_classes = [permissions.IsAuthenticated]  # you can restrict further (admin-only)
-
-    def get(self, request):
-        teachers = TeacherProfile.objects.prefetch_related(
-            Prefetch('students', queryset=Student.objects.prefetch_related('parents_guardians')),
-            'parents_guardians'  # if needed
-        )
-        serializer = TeacherStudentsSerializer(teachers, many=True)
-        return Response(serializer.data)

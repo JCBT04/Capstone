@@ -1,6 +1,6 @@
 from django.db import models
+from django.contrib.auth.models import User
 from teacher.models import TeacherProfile
-
 
 class Student(models.Model):
     GENDER_CHOICES = [
@@ -22,7 +22,11 @@ class Student(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
-        return f"{self.name} (LRN: {self.lrn}) - {self.teacher.user.username}"
+        try:
+            teacher_name = self.teacher.user.username if self.teacher and hasattr(self.teacher, 'user') else 'No Teacher'
+            return f"{self.name} (LRN: {self.lrn}) - {teacher_name}"
+        except:
+            return f"{self.name} (LRN: {self.lrn})"
     
     class Meta:
         ordering = ['teacher', 'name']
@@ -50,8 +54,8 @@ class ParentGuardian(models.Model):
     name = models.CharField(max_length=100)
     username = models.CharField(max_length=100, blank=True, null=True)
     password = models.CharField(max_length=100, blank=True, null=True)
-    # When True the parent must change both username and password on first successful login
     must_change_credentials = models.BooleanField(default=False)
+    avatar = models.ImageField(upload_to='parent_avatars/', blank=True, null=True)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
     contact_number = models.CharField(max_length=15, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
@@ -61,7 +65,12 @@ class ParentGuardian(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
-        return f"{self.name} ({self.role}) - {self.student.name} - Teacher: {self.teacher.user.username}"
+        try:
+            student_name = self.student.name if self.student else 'No Student'
+            teacher_name = self.teacher.user.username if self.teacher and hasattr(self.teacher, 'user') else 'No Teacher'
+            return f"{self.name} ({self.role}) - {student_name} - Teacher: {teacher_name}"
+        except:
+            return f"{self.name} ({self.role})"
     
     class Meta:
         unique_together = ['student', 'role']
@@ -109,7 +118,46 @@ class ParentGuardian(models.Model):
 
         super().save(*args, **kwargs)
 
-# new
+
+class ParentMobileAccount(models.Model):
+    """Mobile app account for parents/guardians"""
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='parent_mobile_account')
+    parent_guardian = models.OneToOneField(
+        ParentGuardian, 
+        on_delete=models.CASCADE, 
+        related_name='mobile_account'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    is_active = models.BooleanField(default=True)
+    
+    def __str__(self):
+        try:
+            username = self.user.username if self.user else 'No User'
+            parent_name = self.parent_guardian.name if self.parent_guardian else 'No Parent'
+            return f"{username} - {parent_name}"
+        except:
+            return f"Mobile Account #{self.pk}"
+    
+    class Meta:
+        verbose_name = "Parent Mobile Account"
+        verbose_name_plural = "Parent Mobile Accounts"
+
+
+class MobileRegistration(models.Model):
+    phone_number = models.CharField(max_length=15, unique=True)
+    verification_code = models.CharField(max_length=6, blank=True, null=True)
+    is_verified = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'parents_mobileregistration'
+        
+    def __str__(self):
+        return f"{self.phone_number} - {'Verified' if self.is_verified else 'Unverified'}"
+
+
 class ParentNotification(models.Model):
     NOTIFICATION_TYPES = [
         ('attendance', 'Attendance'),
@@ -139,37 +187,23 @@ class ParentNotification(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        parent_name = self.parent.name if self.parent_id else 'Unknown'
-        return f"Notification to {parent_name}: {self.type}"
+        try:
+            parent_name = self.parent.name if self.parent else 'Unknown'
+            return f"Notification to {parent_name}: {self.type}"
+        except:
+            return f"Notification #{self.pk}"
 
 
-# new
 class ParentEvent(models.Model):
-    EVENT_TYPES = [
-        ('school', 'School'),
-        ('meeting', 'Meeting'),
-        ('reminder', 'Reminder'),
-        ('other', 'Other'),
-    ]
-
-    parent = models.ForeignKey(
-        ParentGuardian,
-        on_delete=models.CASCADE,
-        related_name='events'
-    )
-    student = models.ForeignKey(
-        Student,
-        on_delete=models.CASCADE,
-        related_name='events',
-        blank=True,
-        null=True
-    )
-    title = models.CharField(max_length=150)
+    teacher = models.ForeignKey('teacher.TeacherProfile', on_delete=models.CASCADE, related_name='events')
+    parent = models.ForeignKey(ParentGuardian, on_delete=models.CASCADE, null=True, blank=True, related_name='events')
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, null=True, blank=True, related_name='events')
+    title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
-    event_type = models.CharField(max_length=32, choices=EVENT_TYPES, default='other')
-    scheduled_at = models.DateTimeField(blank=True, null=True)
-    location = models.CharField(max_length=150, blank=True)
-    extra_data = models.JSONField(blank=True, null=True)
+    event_type = models.CharField(max_length=50)
+    scheduled_at = models.DateTimeField()
+    location = models.CharField(max_length=200, blank=True)
+    extra_data = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -177,9 +211,7 @@ class ParentEvent(models.Model):
         ordering = ['-scheduled_at', '-created_at']
 
     def __str__(self):
-        parent_name = self.parent.name if self.parent_id else 'Unknown'
-        return f"Event for {parent_name}: {self.title}"
-
+        return f"{self.title} - {self.scheduled_at}"
 
 class ParentSchedule(models.Model):
     DAYS_OF_WEEK = [
@@ -227,5 +259,10 @@ class ParentSchedule(models.Model):
         ordering = ['student', 'day_of_week', 'start_time', 'subject', 'created_at']
 
     def __str__(self):
-        student_name = self.student.name if self.student_id else 'Unknown student'
-        return f"{self.subject} - {student_name}"
+        try:
+            student_name = self.student.name if self.student else 'Unknown student'
+            return f"{self.subject} - {student_name}"
+        except:
+            return f"{self.subject}"
+
+
