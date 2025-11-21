@@ -34,6 +34,7 @@ class StudentSerializer(serializers.ModelSerializer):
 class ParentGuardianSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(source='student.name', read_only=True)
     student_lrn = serializers.CharField(source='student.lrn', read_only=True)
+    student_section = serializers.CharField(source='student.section', read_only=True)
     student_gender = serializers.CharField(source='student.gender', read_only=True)
     teacher_name = serializers.CharField(source='teacher.user.username', read_only=True)
     has_mobile_account = serializers.SerializerMethodField()
@@ -47,6 +48,7 @@ class ParentGuardianSerializer(serializers.ModelSerializer):
             'id',
             'student',
             'student_name',
+            'student_section',
             'student_lrn',
             'student_gender',
             'teacher',
