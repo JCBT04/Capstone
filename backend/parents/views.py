@@ -661,11 +661,19 @@ class ParentEventListCreateView(APIView):
         teacher_id = request.query_params.get('teacher_id')
         parent_id = request.query_params.get('parent')
         lrn = request.query_params.get('lrn')
+        section = request.query_params.get('section')
         upcoming = request.query_params.get('upcoming')
         limit = request.query_params.get('limit')
 
         if teacher_id:
             queryset = queryset.filter(teacher_id=teacher_id)
+        # Filter by section: include events explicitly targeted to the section,
+        # events attached to a student in that section, or broadcast events
+        # (section is null) when appropriate.
+        if section:
+            queryset = queryset.filter(
+                Q(section__isnull=True) | Q(section__iexact=section) | Q(student__section__iexact=section)
+            )
         
         if parent_id:
             queryset = queryset.filter(Q(parent_id=parent_id) | Q(parent__isnull=True))
@@ -712,12 +720,40 @@ class ParentEventListCreateView(APIView):
 
         serializer = ParentEventSerializer(data=request.data)
         if serializer.is_valid():
-            # Automatically set the teacher and ensure it's broadcast to all parents
+            # Allow events to target a specific section by providing `section` in payload.
+            section_value = request.data.get('section')
             event = serializer.save(
                 teacher=teacher,
-                parent=None,  # Broadcast to all parents of this teacher's students
+                parent=None,
+                section=section_value,
             )
-            logger.info(f"Teacher {teacher.id} created announcement: {event.title}")
+
+            logger.info(f"Teacher {teacher.id} created announcement: {event.title} (section={section_value})")
+
+            # Create notifications for parents in the targeted section (if provided).
+            try:
+                if section_value:
+                    # Find parents whose student is in the given section and whose teacher is this teacher
+                    parents_qs = ParentGuardian.objects.filter(student__section__iexact=section_value, teacher=teacher)
+                    notifications = []
+                    for p in parents_qs:
+                        try:
+                            notif = ParentNotification(
+                                parent=p,
+                                student=p.student,
+                                type='event',
+                                message=f"{event.title}: {event.description or ''}",
+                                extra_data=json.dumps({'event_id': event.id})
+                            )
+                            notifications.append(notif)
+                        except Exception:
+                            continue
+                    if notifications:
+                        ParentNotification.objects.bulk_create(notifications)
+
+            except Exception:
+                logger.exception('Failed to create section notifications')
+
             output = ParentEventSerializer(event).data
             return Response(output, status=status.HTTP_201_CREATED)
         

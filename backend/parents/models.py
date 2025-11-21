@@ -199,6 +199,8 @@ class ParentEvent(models.Model):
     teacher = models.ForeignKey('teacher.TeacherProfile', on_delete=models.CASCADE, related_name='events', null=True, blank=True)
     parent = models.ForeignKey(ParentGuardian, on_delete=models.CASCADE, null=True, blank=True, related_name='events')
     student = models.ForeignKey(Student, on_delete=models.CASCADE, null=True, blank=True, related_name='events')
+    # Optional section target (e.g., 'Section A') — when set, the event targets parents of students in that section
+    section = models.CharField(max_length=50, blank=True, null=True)
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
     event_type = models.CharField(max_length=50)
