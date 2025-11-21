@@ -195,13 +195,16 @@ class ParentNotification(models.Model):
 
 
 class ParentEvent(models.Model):
-    teacher = models.ForeignKey('teacher.TeacherProfile', on_delete=models.CASCADE, related_name='events')
+    # Allow teacher to be nullable for existing rows when adding this field via migrations
+    teacher = models.ForeignKey('teacher.TeacherProfile', on_delete=models.CASCADE, related_name='events', null=True, blank=True)
     parent = models.ForeignKey(ParentGuardian, on_delete=models.CASCADE, null=True, blank=True, related_name='events')
     student = models.ForeignKey(Student, on_delete=models.CASCADE, null=True, blank=True, related_name='events')
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
     event_type = models.CharField(max_length=50)
-    scheduled_at = models.DateTimeField()
+    # Allow nulls during migration process; a data migration will populate
+    # any existing NULL values before this is made non-nullable.
+    scheduled_at = models.DateTimeField(null=True, blank=True)
     location = models.CharField(max_length=200, blank=True)
     extra_data = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
