@@ -125,15 +125,15 @@ class ParentNotificationAdmin(admin.ModelAdmin):
 
 @admin.register(ParentEvent)
 class ParentEventAdmin(admin.ModelAdmin):
-    list_display = ['id', 'parent', 'title', 'event_type', 'scheduled_at', 'created_at']
-    list_filter = ['event_type', 'scheduled_at', 'created_at']
-    search_fields = ['parent__name', 'parent__username', 'student__name', 'title', 'description']
+    list_display = ['id', 'parent', 'student', 'section', 'title', 'event_type', 'scheduled_at', 'created_at']
+    list_filter = ['event_type', 'section', 'scheduled_at', 'created_at']
+    search_fields = ['parent__name', 'parent__username', 'student__name', 'student__lrn', 'title', 'description']
     readonly_fields = ['created_at', 'updated_at']
     # REMOVED autocomplete_fields - using raw_id_fields instead
     raw_id_fields = ['parent', 'student']
 
     fieldsets = (
-        ('Event Target', {'fields': ('parent', 'student')}),
+        ('Event Target', {'fields': ('parent', 'student', 'section')}),
         ('Details', {'fields': ('title', 'description', 'event_type', 'scheduled_at', 'location')}),
         ('Extra', {'fields': ('extra_data',)}),
         ('System', {'fields': ('created_at', 'updated_at'), 'classes': ('collapse',)}),
