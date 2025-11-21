@@ -554,8 +554,8 @@ class ParentDetailView(APIView):
 
         if updated:
             # If parent was flagged to change credentials on first login, and the request
-            # includes both a username change and a password change, clear that flag.
-            if orig_must and changed_username and changed_password:
+            # includes a password change (username change optional), clear that flag.
+            if orig_must and changed_password:
                 parent.must_change_credentials = False
             parent.save()
             # debug after save
