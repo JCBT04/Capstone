@@ -644,6 +644,12 @@ class ParentEventListCreateView(APIView):
             'teacher', 'parent', 'student'
         ).order_by('-scheduled_at', '-created_at')
 
+        # Debug: log incoming query params for troubleshooting mobile clients
+        try:
+            logger.info('ParentEventListCreateView GET called with params: %s', dict(request.query_params))
+        except Exception:
+            logger.info('ParentEventListCreateView GET called')
+
         # If authenticated user is a parent, automatically filter to their teacher
         user = request.user
         if user and user.is_authenticated:
@@ -691,6 +697,13 @@ class ParentEventListCreateView(APIView):
                 queryset = queryset[:limit_value]
             except (TypeError, ValueError):
                 logger.warning("Invalid limit param for events: %s", limit)
+
+        # Log how many events match before serialization (helps debug empty client views)
+        try:
+            matched_count = queryset.count()
+            logger.info('ParentEventListCreateView matched events: %d', matched_count)
+        except Exception:
+            logger.debug('Could not determine matched_count for events')
 
         serializer = ParentEventSerializer(queryset, many=True)
         return Response(serializer.data)
