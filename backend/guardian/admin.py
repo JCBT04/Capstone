@@ -1,9 +1,9 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import Guardian, GuardianApproval
+from .models import UnregisteredGuardian
 
-@admin.register(Guardian)
-class GuardianAdmin(admin.ModelAdmin):
+@admin.register(UnregisteredGuardian)
+class UnregisteredGuardianAdmin(admin.ModelAdmin):
     list_display = [
         'name', 
         'student_name', 
@@ -20,7 +20,7 @@ class GuardianAdmin(admin.ModelAdmin):
     date_hierarchy = 'timestamp'
     
     fieldsets = (
-        ('Guardian Information', {
+        ('Unregistered Guardian Information', {
             'fields': ('teacher', 'name', 'age', 'relationship')
         }),
         ('Student Information', {
@@ -31,7 +31,7 @@ class GuardianAdmin(admin.ModelAdmin):
         }),
         ('Photo', {
             'fields': ('photo', 'photo_preview'),
-            'description': 'Upload guardian photo (optional)'
+            'description': 'Upload unregistered guardian photo (optional)'
         }),
         ('Metadata', {
             'fields': ('timestamp',),
@@ -68,11 +68,3 @@ class GuardianAdmin(admin.ModelAdmin):
         """Optimize queries by selecting related teacher and user"""
         qs = super().get_queryset(request)
         return qs.select_related('teacher', 'teacher__user')
-
-
-@admin.register(GuardianApproval)
-class GuardianApprovalAdmin(admin.ModelAdmin):
-    list_display = ['guardian', 'status', 'acted_by', 'timestamp', 'source']
-    list_filter = ['status', 'timestamp', 'source']
-    search_fields = ['guardian__name', 'acted_by__username', 'reason']
-    readonly_fields = ['timestamp']

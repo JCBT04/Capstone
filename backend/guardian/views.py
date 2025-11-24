@@ -1,26 +1,23 @@
-import logging
+
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from teacher.models import TeacherProfile
-from .models import Guardian, GuardianApproval
-from .serializers import GuardianSerializer, GuardianApprovalSerializer
+from .models import UnregisteredGuardian
+from .serializers import UnregisteredGuardianSerializer
 import base64
 from django.core.files.base import ContentFile
 from django.db.models import Q
 
-logger = logging.getLogger(__name__)
-
-
-class GuardianView(APIView):
+class UnregisteredGuardianView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
     
     def get(self, request, pk=None):
         """Get all guardians for the authenticated teacher or by teacher ID"""
         try:
-            # If pk is provided, get guardians for that specific teacher
+      
             if pk:
                 try:
                     teacher_profile = TeacherProfile.objects.get(id=pk)
@@ -39,9 +36,9 @@ class GuardianView(APIView):
                         status=status.HTTP_400_BAD_REQUEST
                     )
             
-            # Get guardians for this teacher
-            guardians = Guardian.objects.filter(teacher=teacher_profile).order_by('-timestamp')
-            serializer = GuardianSerializer(guardians, many=True, context={'request': request})
+            # Get unregistered guardians for this teacher
+            guardians = UnregisteredGuardian.objects.filter(teacher=teacher_profile).order_by('-timestamp')
+            serializer = UnregisteredGuardianSerializer(guardians, many=True, context={'request': request})
             
             return Response({
                 "count": guardians.count(),
@@ -124,7 +121,7 @@ class GuardianView(APIView):
             if serializer.is_valid():
                 guardian = serializer.save()
                 return Response({
-                    "message": "Guardian registered successfully",
+                    "message": "Unregistered Guardian registered successfully",
                     "data": serializer.data
                 }, status=status.HTTP_201_CREATED)
             
@@ -162,10 +159,10 @@ class GuardianView(APIView):
                 )
             
             try:
-                guardian = Guardian.objects.get(id=guardian_id, teacher=teacher_profile)
-            except Guardian.DoesNotExist:
+                guardian = UnregisteredGuardian.objects.get(id=guardian_id, teacher=teacher_profile)
+            except UnregisteredGuardian.DoesNotExist:
                 return Response(
-                    {"error": "Guardian not found or you don't have permission to edit it"},
+                    {"error": "Unregistered Guardian not found or you don't have permission to edit it"},
                     status=status.HTTP_404_NOT_FOUND
                 )
             
@@ -184,7 +181,7 @@ class GuardianView(APIView):
                     print(f"Error processing base64 photo: {e}")
             
             # Update guardian
-            serializer = GuardianSerializer(
+            serializer = UnregisteredGuardianSerializer(
                 guardian, 
                 data=request.data, 
                 partial=True, 
@@ -193,18 +190,6 @@ class GuardianView(APIView):
             
             if serializer.is_valid():
                 serializer.save()
-                # If relationship indicates authorization, set is_authorized flag
-                try:
-                    rel = (serializer.validated_data.get('relationship') or serializer.instance.relationship or '')
-                except Exception:
-                    rel = None
-                if rel and 'authorized' in rel.lower():
-                    try:
-                        serializer.instance.is_authorized = True
-                        serializer.instance.save()
-                    except Exception:
-                        logger.exception('Failed to set is_authorized on guardian')
-                logger.debug('Guardian PUT: id=%s teacher=%s updated', guardian_id, getattr(teacher_profile, 'id', None))
                 return Response({
                     "message": "Guardian updated successfully",
                     "data": serializer.data
@@ -217,92 +202,6 @@ class GuardianView(APIView):
                 {"error": f"Error updating guardian: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-    def patch(self, request, pk=None):
-        """Partial update for an existing guardian (supports PATCH requests from mobile clients)."""
-        try:
-            # Get the teacher profile
-            try:
-                teacher_profile = TeacherProfile.objects.get(user=request.user)
-            except TeacherProfile.DoesNotExist:
-                return Response(
-                    {"error": "Teacher profile not found."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            guardian_id = pk or request.data.get('id')
-            if not guardian_id:
-                return Response({"error": "Guardian ID is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-            try:
-                guardian = Guardian.objects.get(id=guardian_id, teacher=teacher_profile)
-            except Guardian.DoesNotExist:
-                return Response({"error": "Guardian not found or you don't have permission to edit it"}, status=status.HTTP_404_NOT_FOUND)
-
-            # If photo_base64 is provided, decode and attach to request.data
-            photo_base64 = request.data.get('photo_base64')
-            if photo_base64:
-                try:
-                    if 'base64,' in photo_base64:
-                        photo_base64 = photo_base64.split('base64,')[1]
-                    photo_data = base64.b64decode(photo_base64)
-                    photo_name = f"guardian_{request.data.get('name', guardian.name).replace(' ', '_')}.jpg"
-                    request.data['photo'] = ContentFile(photo_data, name=photo_name)
-                except Exception as e:
-                    print(f"Error processing base64 photo in PATCH: {e}")
-
-            serializer = GuardianSerializer(
-                guardian,
-                data=request.data,
-                partial=True,
-                context={'request': request}
-            )
-
-            if serializer.is_valid():
-                serializer.save()
-                # If the client provided an explicit action (allow/decline), record it.
-                action = (request.data.get('action') or request.data.get('status') or '').strip().lower()
-                approval_status = None
-                if action in ['allow', 'allowed', 'approve', 'approved']:
-                    approval_status = GuardianApproval.STATUS_ALLOWED
-                elif action in ['decline', 'declined', 'reject', 'rejected']:
-                    approval_status = GuardianApproval.STATUS_DECLINED
-
-                if approval_status:
-                    try:
-                        # Update guardian authorized flag accordingly
-                        serializer.instance.is_authorized = (approval_status == GuardianApproval.STATUS_ALLOWED)
-                        serializer.instance.save()
-
-                        GuardianApproval.objects.create(
-                            guardian=serializer.instance,
-                            status=approval_status,
-                            acted_by=request.user if request.user and request.user.is_authenticated else None,
-                            reason=request.data.get('reason', ''),
-                            source=request.data.get('source', 'mobile')
-                        )
-                    except Exception:
-                        logger.exception('Failed to record guardian approval')
-
-                else:
-                    # Backwards compatibility: if relationship contains 'authorized', set is_authorized
-                    try:
-                        rel = (serializer.validated_data.get('relationship') or serializer.instance.relationship or '')
-                    except Exception:
-                        rel = None
-                    if rel and 'authorized' in rel.lower():
-                        try:
-                            serializer.instance.is_authorized = True
-                            serializer.instance.save()
-                        except Exception:
-                            logger.exception('Failed to set is_authorized on guardian')
-                return Response({"message": "Guardian updated successfully", "data": serializer.data}, status=status.HTTP_200_OK)
-
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        except Exception as e:
-            logger.exception('Error in Guardian.patch handler')
-            return Response({"error": f"Error patching guardian: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def delete(self, request, pk=None):
         """Delete a guardian"""
@@ -325,10 +224,10 @@ class GuardianView(APIView):
                 )
             
             try:
-                guardian = Guardian.objects.get(id=guardian_id, teacher=teacher_profile)
-            except Guardian.DoesNotExist:
+                guardian = UnregisteredGuardian.objects.get(id=guardian_id, teacher=teacher_profile)
+            except UnregisteredGuardian.DoesNotExist:
                 return Response(
-                    {"error": "Guardian not found or you don't have permission to delete it"},
+                    {"error": "Unregistered Guardian not found or you don't have permission to delete it"},
                     status=status.HTTP_404_NOT_FOUND
                 )
             
@@ -345,7 +244,41 @@ class GuardianView(APIView):
             )
 
 
-class GuardianPublicListView(APIView):
+class UnregisteredGuardianByTeacherView(APIView):
+    """Separate view to get guardians by teacher ID"""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, teacher_id):
+        """Get all guardians for a specific teacher by teacher ID"""
+        try:
+            # Get the teacher profile
+            try:
+                teacher_profile = TeacherProfile.objects.get(id=teacher_id)
+            except TeacherProfile.DoesNotExist:
+                return Response(
+                    {"error": f"Teacher profile with ID {teacher_id} not found."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get unregistered guardians for this teacher
+            guardians = UnregisteredGuardian.objects.filter(teacher=teacher_profile).order_by('-timestamp')
+            serializer = UnregisteredGuardianSerializer(guardians, many=True, context={'request': request})
+            
+            return Response({
+                "count": guardians.count(),
+                "teacher_id": teacher_profile.id,
+                "teacher_name": teacher_profile.user.get_full_name() or teacher_profile.user.username,
+                "results": serializer.data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {"error": f"Error fetching guardians: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+# new
+class UnregisteredGuardianPublicListView(APIView):
     """
     Lightweight read-only endpoint so parents/mobile clients can view pending guardians.
     """
@@ -357,7 +290,7 @@ class GuardianPublicListView(APIView):
         search = request.query_params.get('search')
         limit = request.query_params.get('limit')
 
-        queryset = Guardian.objects.all().order_by('-timestamp')
+        queryset = UnregisteredGuardian.objects.all().order_by('-timestamp')
         if teacher_id:
             queryset = queryset.filter(teacher_id=teacher_id)
         if student_name:
@@ -375,12 +308,12 @@ class GuardianPublicListView(APIView):
             except (TypeError, ValueError):
                 pass
 
-        serializer = GuardianSerializer(queryset, many=True, context={'request': request})
+        serializer = UnregisteredGuardianSerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-class GuardianByTeacherView(APIView):
-    """Separate view to get guardians by teacher ID"""
+class UnregisteredGuardianByTeacherView(APIView):
+    """Separate view to get unregistered guardians by teacher ID"""
     permission_classes = [permissions.IsAuthenticated]
     
     def get(self, request, teacher_id):
@@ -395,9 +328,9 @@ class GuardianByTeacherView(APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # Get guardians for this teacher
-            guardians = Guardian.objects.filter(teacher=teacher_profile).order_by('-timestamp')
-            serializer = GuardianSerializer(guardians, many=True, context={'request': request})
+            # Get unregistered guardians for this teacher
+            guardians = UnregisteredGuardian.objects.filter(teacher=teacher_profile).order_by('-timestamp')
+            serializer = UnregisteredGuardianSerializer(guardians, many=True, context={'request': request})
             
             return Response({
                 "count": guardians.count(),

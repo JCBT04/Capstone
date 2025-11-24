@@ -1,17 +1,17 @@
-from rest_framework import serializers
-from .models import Guardian, GuardianApproval
 
-class GuardianSerializer(serializers.ModelSerializer):
+from rest_framework import serializers
+from .models import UnregisteredGuardian
+
+class UnregisteredGuardianSerializer(serializers.ModelSerializer):
     photo_url = serializers.SerializerMethodField()
     teacher_name = serializers.CharField(source='teacher.user.get_full_name', read_only=True)
     
     class Meta:
-        model = Guardian
+        model = UnregisteredGuardian
         fields = [
             'id',
             'teacher',
             'teacher_name',
-            'is_authorized',
             'name',
             'age',
             'address',
@@ -52,12 +52,3 @@ class GuardianSerializer(serializers.ModelSerializer):
         if not value or not value.strip():
             raise serializers.ValidationError("Student name cannot be empty.")
         return value.strip()
-
-
-class GuardianApprovalSerializer(serializers.ModelSerializer):
-    acted_by_username = serializers.CharField(source='acted_by.username', read_only=True)
-
-    class Meta:
-        model = GuardianApproval
-        fields = ['id', 'guardian', 'status', 'acted_by', 'acted_by_username', 'reason', 'source', 'timestamp']
-        read_only_fields = ['id', 'timestamp', 'acted_by_username']

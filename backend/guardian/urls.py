@@ -1,11 +1,18 @@
+
 from django.urls import path
-from .views import GuardianView, GuardianByTeacherView, GuardianPublicListView
+from .views import (
+    UnregisteredGuardianView,
+    UnregisteredGuardianByTeacherView,
+    UnregisteredGuardianPublicListView,
+)
 
 app_name = 'guardian'
 
 urlpatterns = [
-    path('', GuardianView.as_view(), name='guardian-list-create'),
-    path('<int:pk>/', GuardianView.as_view(), name='guardian-detail'),
-    path('teacher/<int:teacher_id>/', GuardianByTeacherView.as_view(), name='guardian-by-teacher'),
-    path('public/', GuardianPublicListView.as_view(), name='guardian-public-list'),
+    path('', UnregisteredGuardianView.as_view(), name='guardian-list-create'),
+    path('<int:pk>/', UnregisteredGuardianView.as_view(), name='guardian-detail'),
+    path('teacher/<int:teacher_id>/', UnregisteredGuardianByTeacherView.as_view(), name='guardian-by-teacher'),
+
+    path('public/', UnregisteredGuardianPublicListView.as_view(), name='guardian-public-list'),
+
 ]
