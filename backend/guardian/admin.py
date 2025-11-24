@@ -10,11 +10,12 @@ class UnregisteredGuardianAdmin(admin.ModelAdmin):
         'age',
         'relationship', 
         'contact', 
+        'status',
         'teacher_display',
         'photo_thumbnail',
         'timestamp'
     ]
-    list_filter = ['relationship', 'timestamp', 'teacher']
+    list_filter = ['relationship', 'status', 'timestamp', 'teacher']
     search_fields = ['name', 'student_name', 'contact', 'address']
     readonly_fields = ['timestamp', 'photo_preview']
     date_hierarchy = 'timestamp'
@@ -68,3 +69,15 @@ class UnregisteredGuardianAdmin(admin.ModelAdmin):
         """Optimize queries by selecting related teacher and user"""
         qs = super().get_queryset(request)
         return qs.select_related('teacher', 'teacher__user')
+
+    actions = ['mark_allowed', 'mark_declined']
+
+    def mark_allowed(self, request, queryset):
+        updated = queryset.update(status='allowed')
+        self.message_user(request, f"Marked {updated} as allowed.")
+    mark_allowed.short_description = "Mark selected as Allowed"
+
+    def mark_declined(self, request, queryset):
+        updated = queryset.update(status='declined')
+        self.message_user(request, f"Marked {updated} as declined.")
+    mark_declined.short_description = "Mark selected as Declined"

@@ -117,7 +117,7 @@ class UnregisteredGuardianView(APIView):
                 data['photo'] = request.FILES['photo']
             
             # Validate and save
-            serializer = GuardianSerializer(data=data, context={'request': request})
+            serializer = UnregisteredGuardianSerializer(data=data, context={'request': request})
             if serializer.is_valid():
                 guardian = serializer.save()
                 return Response({

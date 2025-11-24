@@ -20,6 +20,15 @@ class UnregisteredGuardian(models.Model):
         null=True,
         help_text='Guardian photo'
     )
+    STATUS_PENDING = 'pending'
+    STATUS_ALLOWED = 'allowed'
+    STATUS_DECLINED = 'declined'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_ALLOWED, 'Allowed'),
+        (STATUS_DECLINED, 'Declined'),
+    ]
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_PENDING)
     timestamp = models.DateTimeField(auto_now_add=True)
     
     class Meta:

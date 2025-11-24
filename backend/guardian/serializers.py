@@ -12,6 +12,7 @@ class UnregisteredGuardianSerializer(serializers.ModelSerializer):
             'id',
             'teacher',
             'teacher_name',
+            'status',
             'name',
             'age',
             'address',
@@ -23,6 +24,13 @@ class UnregisteredGuardianSerializer(serializers.ModelSerializer):
             'timestamp'
         ]
         read_only_fields = ['id', 'timestamp', 'teacher_name', 'photo_url']
+
+    def validate_status(self, value):
+        """Ensure status is one of allowed choices."""
+        valid = {c[0] for c in UnregisteredGuardian._meta.get_field('status').choices}
+        if value not in valid:
+            raise serializers.ValidationError("Invalid status value.")
+        return value
     
     def get_photo_url(self, obj):
         """Return the full URL for the photo"""
