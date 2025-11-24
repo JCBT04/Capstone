@@ -179,9 +179,31 @@ class UnregisteredGuardianView(APIView):
                     print(f"Error processing base64 photo: {e}")
             
             # Partial update - only update provided fields
+            # Debug: log incoming patch info
+            try:
+                print(f"[UnregisteredGuardian PATCH] user={getattr(request.user, 'username', request.user)} id={guardian_id} data={request.data}")
+            except Exception:
+                pass
+
+            # If status provided explicitly, set it directly to ensure persistence
+            status_val = None
+            try:
+                status_val = request.data.get('status')
+            except Exception:
+                # request.data might not support get; ignore
+                pass
+
+            if status_val is not None:
+                try:
+                    guardian.status = status_val
+                    guardian.save()
+                    print(f"[UnregisteredGuardian PATCH] directly set status to {guardian.status} for id={guardian.id}")
+                except Exception as e:
+                    print(f"[UnregisteredGuardian PATCH] failed to set status directly: {e}")
+
             serializer = UnregisteredGuardianSerializer(
-                guardian, 
-                data=request.data, 
+                guardian,
+                data=request.data,
                 partial=True,  # This is key for PATCH
                 context={'request': request}
             )
