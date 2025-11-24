@@ -265,6 +265,11 @@ class UnregisteredGuardianView(APIView):
                 {"error": f"Error updating guardian: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    def patch(self, request, pk=None):
+        """Accept PATCH requests and delegate to put handler (partial update)."""
+        # The put handler already uses partial=True when updating, so we can reuse it.
+        return self.put(request, pk)
     
     def delete(self, request, pk=None):
         """Delete a guardian permanently"""
