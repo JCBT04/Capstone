@@ -1,4 +1,3 @@
-
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -17,7 +16,6 @@ class UnregisteredGuardianView(APIView):
     def get(self, request, pk=None):
         """Get all guardians for the authenticated teacher or by teacher ID"""
         try:
-      
             if pk:
                 try:
                     teacher_profile = TeacherProfile.objects.get(id=pk)
@@ -138,8 +136,73 @@ class UnregisteredGuardianView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
+    def patch(self, request, pk=None):
+        """Partially update an existing guardian (e.g., just status)"""
+        try:
+            # Get the teacher profile
+            try:
+                teacher_profile = TeacherProfile.objects.get(user=request.user)
+            except TeacherProfile.DoesNotExist:
+                return Response(
+                    {"error": "Teacher profile not found."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get the guardian
+            guardian_id = pk or request.data.get('id')
+            if not guardian_id:
+                return Response(
+                    {"error": "Guardian ID is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                guardian = UnregisteredGuardian.objects.get(id=guardian_id, teacher=teacher_profile)
+            except UnregisteredGuardian.DoesNotExist:
+                return Response(
+                    {"error": "Unregistered Guardian not found or you don't have permission to edit it"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Handle photo update if provided
+            photo_base64 = request.data.get('photo_base64')
+            if photo_base64:
+                try:
+                    if 'base64,' in photo_base64:
+                        photo_base64 = photo_base64.split('base64,')[1]
+                    
+                    photo_data = base64.b64decode(photo_base64)
+                    photo_name = f"guardian_{request.data.get('name', guardian.name).replace(' ', '_')}.jpg"
+                    photo = ContentFile(photo_data, name=photo_name)
+                    request.data['photo'] = photo
+                except Exception as e:
+                    print(f"Error processing base64 photo: {e}")
+            
+            # Partial update - only update provided fields
+            serializer = UnregisteredGuardianSerializer(
+                guardian, 
+                data=request.data, 
+                partial=True,  # This is key for PATCH
+                context={'request': request}
+            )
+            
+            if serializer.is_valid():
+                serializer.save()
+                return Response({
+                    "message": "Guardian updated successfully",
+                    "data": serializer.data
+                }, status=status.HTTP_200_OK)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            return Response(
+                {"error": f"Error updating guardian: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
     def put(self, request, pk=None):
-        """Update an existing guardian"""
+        """Fully update an existing guardian (all fields required)"""
         try:
             # Get the teacher profile
             try:
@@ -180,11 +243,11 @@ class UnregisteredGuardianView(APIView):
                 except Exception as e:
                     print(f"Error processing base64 photo: {e}")
             
-            # Update guardian
+            # Full update
             serializer = UnregisteredGuardianSerializer(
                 guardian, 
                 data=request.data, 
-                partial=True, 
+                partial=False,  # All fields required for PUT
                 context={'request': request}
             )
             
@@ -204,7 +267,7 @@ class UnregisteredGuardianView(APIView):
             )
     
     def delete(self, request, pk=None):
-        """Delete a guardian"""
+        """Delete a guardian permanently"""
         try:
             # Get the teacher profile
             try:
@@ -277,7 +340,7 @@ class UnregisteredGuardianByTeacherView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-# new
+
 class UnregisteredGuardianPublicListView(APIView):
     """
     Lightweight read-only endpoint so parents/mobile clients can view pending guardians.
@@ -310,37 +373,3 @@ class UnregisteredGuardianPublicListView(APIView):
 
         serializer = UnregisteredGuardianSerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
-
-
-class UnregisteredGuardianByTeacherView(APIView):
-    """Separate view to get unregistered guardians by teacher ID"""
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get(self, request, teacher_id):
-        """Get all guardians for a specific teacher by teacher ID"""
-        try:
-            # Get the teacher profile
-            try:
-                teacher_profile = TeacherProfile.objects.get(id=teacher_id)
-            except TeacherProfile.DoesNotExist:
-                return Response(
-                    {"error": f"Teacher profile with ID {teacher_id} not found."},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Get unregistered guardians for this teacher
-            guardians = UnregisteredGuardian.objects.filter(teacher=teacher_profile).order_by('-timestamp')
-            serializer = UnregisteredGuardianSerializer(guardians, many=True, context={'request': request})
-            
-            return Response({
-                "count": guardians.count(),
-                "teacher_id": teacher_profile.id,
-                "teacher_name": teacher_profile.user.get_full_name() or teacher_profile.user.username,
-                "results": serializer.data
-            }, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            return Response(
-                {"error": f"Error fetching guardians: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
