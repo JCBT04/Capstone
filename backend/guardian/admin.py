@@ -13,7 +13,8 @@ class UnregisteredGuardianAdmin(admin.ModelAdmin):
         'status',
         'teacher_display',
         'photo_thumbnail',
-        'timestamp'
+        'timestamp',
+        'status',
     ]
     list_filter = ['relationship', 'status', 'timestamp', 'teacher']
     search_fields = ['name', 'student_name', 'contact', 'address']
