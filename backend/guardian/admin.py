@@ -23,7 +23,7 @@ class UnregisteredGuardianAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Unregistered Guardian Information', {
-            'fields': ('teacher', 'name', 'age', 'relationship')
+            'fields': ('teacher', 'name', 'age', 'relationship', 'status')
         }),
         ('Student Information', {
             'fields': ('student_name',)
