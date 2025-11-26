@@ -396,31 +396,30 @@ class GuardianPublicListView(APIView):
 
 class ParentGuardianListView(APIView):
     """
-    Endpoint for authenticated parents to view and manage guardian requests for their child.
-    Parents can only see guardians for their own student.
+    Endpoint for parents to view and manage guardian requests for their child.
+    Parents pass their parent_id as query parameter.
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get(self, request):
-        """Get all pending guardians for authenticated parent's child"""
+        """Get all pending guardians for a parent's child"""
         try:
-            # Get the parent guardian account
-            parent_guardian = None
-            try:
-                # Try to get via ParentMobileAccount if user has one
-                mobile_account = ParentMobileAccount.objects.get(user=request.user)
-                parent_guardian = mobile_account.parent_guardian
-            except ParentMobileAccount.DoesNotExist:
-                # Try direct lookup
-                parent_guardian = ParentGuardian.objects.get(
-                    student__parents_guardians__in=ParentGuardian.objects.filter(user=request.user)
+            # Get parent_id from query parameter
+            parent_id = request.query_params.get('parent_id')
+            
+            if not parent_id:
+                return Response(
+                    {"error": "parent_id is required"},
+                    status=status.HTTP_400_BAD_REQUEST
                 )
             
-            if not parent_guardian:
+            try:
+                parent_guardian = ParentGuardian.objects.get(id=parent_id)
+            except ParentGuardian.DoesNotExist:
                 return Response(
                     {"error": "Parent guardian account not found"},
-                    status=status.HTTP_400_BAD_REQUEST
+                    status=status.HTTP_404_NOT_FOUND
                 )
             
             # Get guardians for this parent's student
@@ -451,7 +450,7 @@ class ParentGuardianListView(APIView):
             )
 
     def patch(self, request, pk=None):
-        """Update guardian status (allow/decline) for authenticated parent"""
+        """Update guardian status (allow/decline) for parent"""
         try:
             if not pk:
                 return Response(
@@ -459,18 +458,21 @@ class ParentGuardianListView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Get the parent guardian account
-            parent_guardian = None
-            try:
-                mobile_account = ParentMobileAccount.objects.get(user=request.user)
-                parent_guardian = mobile_account.parent_guardian
-            except ParentMobileAccount.DoesNotExist:
-                pass
+            # Get parent_id from query parameter
+            parent_id = request.query_params.get('parent_id')
             
-            if not parent_guardian:
+            if not parent_id:
+                return Response(
+                    {"error": "parent_id is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                parent_guardian = ParentGuardian.objects.get(id=parent_id)
+            except ParentGuardian.DoesNotExist:
                 return Response(
                     {"error": "Parent guardian account not found"},
-                    status=status.HTTP_400_BAD_REQUEST
+                    status=status.HTTP_404_NOT_FOUND
                 )
             
             # Get the guardian - verify it belongs to this parent's student
@@ -518,7 +520,7 @@ class ParentGuardianListView(APIView):
             )
 
     def delete(self, request, pk=None):
-        """Delete a guardian for authenticated parent"""
+        """Delete a guardian for parent"""
         try:
             if not pk:
                 return Response(
@@ -526,13 +528,24 @@ class ParentGuardianListView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
+            # Get parent_id from query parameter
+            parent_id = request.query_params.get('parent_id')
+            
+            if not parent_id:
+                return Response(
+                    {"error": "parent_id is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
             # Get the parent guardian account
             parent_guardian = None
             try:
-                mobile_account = ParentMobileAccount.objects.get(user=request.user)
-                parent_guardian = mobile_account.parent_guardian
-            except ParentMobileAccount.DoesNotExist:
-                pass
+                parent_guardian = ParentGuardian.objects.get(id=parent_id)
+            except ParentGuardian.DoesNotExist:
+                return Response(
+                    {"error": "Parent guardian account not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
             
             if not parent_guardian:
                 return Response(
