@@ -13,9 +13,13 @@ class GuardianView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
-    def patch(self, request, pk=None):
+    def patch(self, request, pk=None, **kwargs):
         """Partially update a guardian (e.g., status change)"""
         try:
+            # Extract pk from kwargs if not provided as parameter
+            if pk is None and 'pk' in kwargs:
+                pk = kwargs['pk']
+            
             # Get the teacher profile
             try:
                 teacher_profile = TeacherProfile.objects.get(user=request.user)
@@ -41,6 +45,7 @@ class GuardianView(APIView):
                 )
             
             # Update guardian with partial data
+            print(f"[PATCH DEBUG] Updating guardian {pk} with data: {request.data}")
             serializer = GuardianSerializer(
                 guardian, 
                 data=request.data, 
@@ -49,12 +54,14 @@ class GuardianView(APIView):
             )
             
             if serializer.is_valid():
-                serializer.save()
+                updated_guardian = serializer.save()
+                print(f"[PATCH DEBUG] Guardian {pk} updated successfully. New status: {updated_guardian.status}")
                 return Response({
                     "message": "Guardian updated successfully",
                     "data": serializer.data
                 }, status=status.HTTP_200_OK)
             
+            print(f"[PATCH DEBUG] Serializer errors: {serializer.errors}")
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
             
         except Exception as e:
@@ -63,9 +70,13 @@ class GuardianView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    def get(self, request, pk=None):
+    def get(self, request, pk=None, **kwargs):
         """Get all guardians for the authenticated teacher or by teacher ID"""
         try:
+            # Extract pk from kwargs if not provided as parameter
+            if pk is None and 'pk' in kwargs:
+                pk = kwargs['pk']
+            
             if pk:
                 try:
                     teacher_profile = TeacherProfile.objects.get(id=pk)
@@ -186,9 +197,13 @@ class GuardianView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    def put(self, request, pk=None):
+    def put(self, request, pk=None, **kwargs):
         """Update an existing guardian"""
         try:
+            # Extract pk from kwargs if not provided as parameter
+            if pk is None and 'pk' in kwargs:
+                pk = kwargs['pk']
+            
             # Get the teacher profile
             try:
                 teacher_profile = TeacherProfile.objects.get(user=request.user)
@@ -251,9 +266,13 @@ class GuardianView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    def delete(self, request, pk=None):
+    def delete(self, request, pk=None, **kwargs):
         """Delete a guardian"""
         try:
+            # Extract pk from kwargs if not provided as parameter
+            if pk is None and 'pk' in kwargs:
+                pk = kwargs['pk']
+            
             # Get the teacher profile
             try:
                 teacher_profile = TeacherProfile.objects.get(user=request.user)
