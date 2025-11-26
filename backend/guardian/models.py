@@ -1,5 +1,6 @@
 from django.db import models
 from teacher.models import TeacherProfile
+from parents.models import ParentGuardian, Student
 
 class Guardian(models.Model):
     STATUS_CHOICES = [
@@ -12,6 +13,22 @@ class Guardian(models.Model):
         TeacherProfile, 
         on_delete=models.CASCADE, 
         related_name='guardians'
+    )
+    # Link to the parent/guardian who registered this guardian
+    parent_guardian = models.ForeignKey(
+        ParentGuardian,
+        on_delete=models.CASCADE,
+        related_name='registered_guardians',
+        null=True,
+        blank=True
+    )
+    # Link to the student
+    student = models.ForeignKey(
+        Student,
+        on_delete=models.CASCADE,
+        related_name='guardians',
+        null=True,
+        blank=True
     )
     name = models.CharField(max_length=255)
     age = models.IntegerField()

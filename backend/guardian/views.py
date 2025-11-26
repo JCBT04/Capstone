@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from teacher.models import TeacherProfile
+from parents.models import ParentGuardian, ParentMobileAccount
 from .models import Guardian
 from .serializers import GuardianSerializer
 import base64
@@ -391,3 +392,174 @@ class GuardianPublicListView(APIView):
 
         serializer = GuardianSerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class ParentGuardianListView(APIView):
+    """
+    Endpoint for authenticated parents to view and manage guardian requests for their child.
+    Parents can only see guardians for their own student.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get(self, request):
+        """Get all pending guardians for authenticated parent's child"""
+        try:
+            # Get the parent guardian account
+            parent_guardian = None
+            try:
+                # Try to get via ParentMobileAccount if user has one
+                mobile_account = ParentMobileAccount.objects.get(user=request.user)
+                parent_guardian = mobile_account.parent_guardian
+            except ParentMobileAccount.DoesNotExist:
+                # Try direct lookup
+                parent_guardian = ParentGuardian.objects.get(
+                    student__parents_guardians__in=ParentGuardian.objects.filter(user=request.user)
+                )
+            
+            if not parent_guardian:
+                return Response(
+                    {"error": "Parent guardian account not found"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get guardians for this parent's student
+            student = parent_guardian.student
+            guardians = Guardian.objects.filter(
+                student=student,
+                status='pending'  # Only show pending guardians
+            ).order_by('-timestamp')
+            
+            serializer = GuardianSerializer(guardians, many=True, context={'request': request})
+            
+            return Response({
+                "count": guardians.count(),
+                "student_id": student.lrn,
+                "student_name": student.name,
+                "results": serializer.data
+            }, status=status.HTTP_200_OK)
+            
+        except ParentGuardian.DoesNotExist:
+            return Response(
+                {"error": "Parent guardian account not found"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {"error": f"Error fetching guardians: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def patch(self, request, pk=None):
+        """Update guardian status (allow/decline) for authenticated parent"""
+        try:
+            if not pk:
+                return Response(
+                    {"error": "Guardian ID is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get the parent guardian account
+            parent_guardian = None
+            try:
+                mobile_account = ParentMobileAccount.objects.get(user=request.user)
+                parent_guardian = mobile_account.parent_guardian
+            except ParentMobileAccount.DoesNotExist:
+                pass
+            
+            if not parent_guardian:
+                return Response(
+                    {"error": "Parent guardian account not found"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get the guardian - verify it belongs to this parent's student
+            try:
+                guardian = Guardian.objects.get(
+                    id=pk,
+                    student=parent_guardian.student
+                )
+            except Guardian.DoesNotExist:
+                return Response(
+                    {"error": "Guardian not found or does not belong to your child"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Only allow updating status field for parents
+            allowed_fields = {'status'}
+            provided_fields = set(request.data.keys())
+            if not provided_fields.issubset(allowed_fields):
+                return Response(
+                    {"error": "Parents can only update the status field"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Update status
+            serializer = GuardianSerializer(
+                guardian,
+                data=request.data,
+                partial=True,
+                context={'request': request}
+            )
+            
+            if serializer.is_valid():
+                serializer.save()
+                return Response({
+                    "message": "Guardian status updated successfully",
+                    "data": serializer.data
+                }, status=status.HTTP_200_OK)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            return Response(
+                {"error": f"Error updating guardian: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def delete(self, request, pk=None):
+        """Delete a guardian for authenticated parent"""
+        try:
+            if not pk:
+                return Response(
+                    {"error": "Guardian ID is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get the parent guardian account
+            parent_guardian = None
+            try:
+                mobile_account = ParentMobileAccount.objects.get(user=request.user)
+                parent_guardian = mobile_account.parent_guardian
+            except ParentMobileAccount.DoesNotExist:
+                pass
+            
+            if not parent_guardian:
+                return Response(
+                    {"error": "Parent guardian account not found"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get the guardian - verify it belongs to this parent's student
+            try:
+                guardian = Guardian.objects.get(
+                    id=pk,
+                    student=parent_guardian.student
+                )
+            except Guardian.DoesNotExist:
+                return Response(
+                    {"error": "Guardian not found or does not belong to your child"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            guardian.delete()
+            return Response(
+                {"message": "Guardian deleted successfully"},
+                status=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            return Response(
+                {"error": f"Error deleting guardian: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
