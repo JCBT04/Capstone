@@ -20,15 +20,6 @@ class GuardianView(APIView):
             if pk is None and 'pk' in kwargs:
                 pk = kwargs['pk']
             
-            # Get the teacher profile
-            try:
-                teacher_profile = TeacherProfile.objects.get(user=request.user)
-            except TeacherProfile.DoesNotExist:
-                return Response(
-                    {"error": "Teacher profile not found."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
             # Get the guardian
             if not pk:
                 return Response(
@@ -37,12 +28,35 @@ class GuardianView(APIView):
                 )
             
             try:
-                guardian = Guardian.objects.get(id=pk, teacher=teacher_profile)
+                guardian = Guardian.objects.get(id=pk)
             except Guardian.DoesNotExist:
                 return Response(
-                    {"error": "Guardian not found or you don't have permission to edit it"},
+                    {"error": "Guardian not found"},
                     status=status.HTTP_404_NOT_FOUND
                 )
+            
+            # Verify user is authorized to update this guardian
+            # Either they are the teacher of this guardian, or they are updating only the status field
+            try:
+                teacher_profile = TeacherProfile.objects.get(user=request.user)
+                # User is a teacher, allow update if it's their guardian
+                if guardian.teacher != teacher_profile:
+                    return Response(
+                        {"error": "You don't have permission to edit this guardian"},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            except TeacherProfile.DoesNotExist:
+                # User is not a teacher (likely a parent/guardian)
+                # Only allow updating the status field
+                if request.data and len(request.data) > 0:
+                    allowed_fields = {'status'}
+                    provided_fields = set(request.data.keys())
+                    if not provided_fields.issubset(allowed_fields):
+                        return Response(
+                            {"error": "Parents/Guardians can only update the status field"},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
+
             
             # Update guardian with partial data
             print(f"[PATCH DEBUG] Updating guardian {pk} with data: {request.data}")
