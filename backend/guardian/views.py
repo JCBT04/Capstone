@@ -1,4 +1,3 @@
-
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -14,13 +13,7 @@ class GuardianView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
-    # In your GuardianView class, add this method:
-
-class GuardianView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser, JSONParser]
-
-    def patch(self, request, pk=None):  # ← Fixed: Added 4 spaces of indentation
+    def patch(self, request, pk=None):
         """Partially update a guardian (e.g., status change)"""
         try:
             # Get the teacher profile
@@ -332,7 +325,7 @@ class GuardianByTeacherView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-# new
+
 class GuardianPublicListView(APIView):
     """
     Lightweight read-only endpoint so parents/mobile clients can view pending guardians.
@@ -365,37 +358,3 @@ class GuardianPublicListView(APIView):
 
         serializer = GuardianSerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
-
-
-class GuardianByTeacherView(APIView):
-    """Separate view to get guardians by teacher ID"""
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get(self, request, teacher_id):
-        """Get all guardians for a specific teacher by teacher ID"""
-        try:
-            # Get the teacher profile
-            try:
-                teacher_profile = TeacherProfile.objects.get(id=teacher_id)
-            except TeacherProfile.DoesNotExist:
-                return Response(
-                    {"error": f"Teacher profile with ID {teacher_id} not found."},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Get guardians for this teacher
-            guardians = Guardian.objects.filter(teacher=teacher_profile).order_by('-timestamp')
-            serializer = GuardianSerializer(guardians, many=True, context={'request': request})
-            
-            return Response({
-                "count": guardians.count(),
-                "teacher_id": teacher_profile.id,
-                "teacher_name": teacher_profile.user.get_full_name() or teacher_profile.user.username,
-                "results": serializer.data
-            }, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            return Response(
-                {"error": f"Error fetching guardians: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
