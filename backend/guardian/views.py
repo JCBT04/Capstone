@@ -13,6 +13,58 @@ from django.db.models import Q
 class GuardianView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    # In your GuardianView class, add this method:
+
+def patch(self, request, pk=None):
+    """Partially update a guardian (e.g., status change)"""
+    try:
+        # Get the teacher profile
+        try:
+            teacher_profile = TeacherProfile.objects.get(user=request.user)
+        except TeacherProfile.DoesNotExist:
+            return Response(
+                {"error": "Teacher profile not found."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get the guardian
+        if not pk:
+            return Response(
+                {"error": "Guardian ID is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            guardian = Guardian.objects.get(id=pk, teacher=teacher_profile)
+        except Guardian.DoesNotExist:
+            return Response(
+                {"error": "Guardian not found or you don't have permission to edit it"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Update guardian with partial data
+        serializer = GuardianSerializer(
+            guardian, 
+            data=request.data, 
+            partial=True,  # This is key for PATCH
+            context={'request': request}
+        )
+        
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "message": "Guardian updated successfully",
+                "data": serializer.data
+            }, status=status.HTTP_200_OK)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+    except Exception as e:
+        return Response(
+            {"error": f"Error updating guardian: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
     
     def get(self, request, pk=None):
         """Get all guardians for the authenticated teacher or by teacher ID"""
