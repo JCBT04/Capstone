@@ -423,9 +423,10 @@ class ParentGuardianListView(APIView):
                 )
             
             # Get guardians for this parent's student
+            # Match by the student FK when set, or by student_name (case-insensitive)
             student = parent_guardian.student
             guardians = Guardian.objects.filter(
-                student=student,
+                (Q(student=student) | Q(student_name__iexact=student.name)),
                 status='pending'  # Only show pending guardians
             ).order_by('-timestamp')
             
@@ -476,12 +477,13 @@ class ParentGuardianListView(APIView):
                 )
             
             # Get the guardian - verify it belongs to this parent's student
-            try:
-                guardian = Guardian.objects.get(
-                    id=pk,
-                    student=parent_guardian.student
-                )
-            except Guardian.DoesNotExist:
+            # Try to find the guardian by id and verify it belongs to this parent's student.
+            # Support records where the guardian.student FK is null by falling back to student_name.
+            guardian_qs = Guardian.objects.filter(id=pk).filter(
+                Q(student=parent_guardian.student) | Q(student_name__iexact=parent_guardian.student.name)
+            )
+            guardian = guardian_qs.first()
+            if not guardian:
                 return Response(
                     {"error": "Guardian not found or does not belong to your child"},
                     status=status.HTTP_404_NOT_FOUND
@@ -554,12 +556,11 @@ class ParentGuardianListView(APIView):
                 )
             
             # Get the guardian - verify it belongs to this parent's student
-            try:
-                guardian = Guardian.objects.get(
-                    id=pk,
-                    student=parent_guardian.student
-                )
-            except Guardian.DoesNotExist:
+            guardian_qs = Guardian.objects.filter(id=pk).filter(
+                Q(student=parent_guardian.student) | Q(student_name__iexact=parent_guardian.student.name)
+            )
+            guardian = guardian_qs.first()
+            if not guardian:
                 return Response(
                     {"error": "Guardian not found or does not belong to your child"},
                     status=status.HTTP_404_NOT_FOUND
