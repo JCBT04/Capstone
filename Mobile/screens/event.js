@@ -12,19 +12,16 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../components/ThemeContext";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com";
+const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
 const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 
 const EVENTS_ENDPOINT = `${BACKEND_URL}/api/parents/events/`;
-const PARENTS_ENDPOINT = `${BACKEND_URL}/api/parents/parents/`;
 
-const Events = ({ navigation }) => {
+const Events = ({ navigation, route }) => {
   const { darkModeEnabled } = useTheme();
   const isDark = darkModeEnabled;
 
-  // Use same color strategy as schedule: deterministic palette or single color
-  const USE_SINGLE_COLOR = false; // set to true to force one color for all events
-  const SINGLE_COLOR = '#1f77b4';
+  // Color palette for events
   const PALETTE = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f'];
 
   const hashStringToInt = (str) => {
@@ -46,8 +43,6 @@ const Events = ({ navigation }) => {
   };
 
   const pickColor = (key) => {
-    if (USE_SINGLE_COLOR) return SINGLE_COLOR;
-    // namespace the key so events differ from schedules/notifications
     const seededKey = `event:${String(key || '')}`;
     const seed = Math.abs(hashStringToInt(seededKey));
     const rnd = mulberry32(seed)();
@@ -59,171 +54,119 @@ const Events = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [studentSection, setStudentSection] = useState(null);
 
-  const parseStoredParent = async () => {
-    const storedParentRaw = await AsyncStorage.getItem("parent");
-    if (!storedParentRaw) return null;
+  const formatDate = (dateString) => {
+    if (!dateString) return 'Date not set';
     try {
-      return JSON.parse(storedParentRaw);
-    } catch (err) {
-      console.warn("[Events] failed parsing cached parent", err);
-      return null;
+      const date = new Date(dateString);
+      return date.toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (e) {
+      return dateString;
     }
-  };
-
-  const parentSnapshot = (record) => {
-    if (!record || typeof record !== "object") return null;
-    const studentObj =
-      record.student && typeof record.student === "object" ? record.student : null;
-    return {
-      parentId: record.id || record.parent || null,
-      username: record.username || null,
-      studentLrn: record.student_lrn || studentObj?.lrn || record.student || null,
-      studentName: record.student_name || studentObj?.name || null,
-    };
-  };
-
-  const determineParentContext = async () => {
-    const storedParent = await parseStoredParent();
-    if (storedParent) {
-      const snapshot = parentSnapshot(storedParent);
-      if (snapshot && (snapshot.parentId || snapshot.studentLrn || snapshot.studentName)) {
-        return snapshot;
-      }
-    }
-
-    const username = await AsyncStorage.getItem("username");
-    if (!username) return null;
-
-    const token = await AsyncStorage.getItem("token");
-    if (!token) return null;
-
-    try {
-      const headers = {
-        "Content-Type": "application/json",
-        Authorization: `Token ${token}`,
-      };
-      const parentsResp = await fetch(PARENTS_ENDPOINT, { headers });
-      if (!parentsResp.ok) throw new Error(`Parents HTTP ${parentsResp.status}`);
-      let payload = await parentsResp.json();
-      if (payload && payload.results) payload = payload.results;
-      if (!Array.isArray(payload)) payload = [];
-      const match = payload.find(
-        (record) => record && record.username && record.username === username
-      );
-      if (match) return parentSnapshot(match);
-    } catch (err) {
-      console.warn("[Events] determineParentContext failed", err);
-    }
-    return null;
-  };
-
-  const buildEventsQuery = (context) => {
-    if (!context) return EVENTS_ENDPOINT;
-    const params = [];
-    if (context.parentId) params.push(`parent=${encodeURIComponent(context.parentId)}`);
-    if (context.studentLrn) params.push(`lrn=${encodeURIComponent(context.studentLrn)}`);
-    return params.length ? `${EVENTS_ENDPOINT}?${params.join("&")}` : EVENTS_ENDPOINT;
-  };
-
-  const filterEventsByContext = (data, context) => {
-    if (!context) return data;
-    const parentId = context.parentId ? Number(context.parentId) : null;
-    const studentLrn = context.studentLrn ? String(context.studentLrn).toLowerCase() : null;
-    const studentName = context.studentName ? context.studentName.trim().toLowerCase() : null;
-
-    return data.filter((event) => {
-      if (!event) return false;
-
-      const eventParent = (() => {
-        if (event.parent == null) return null;
-        if (typeof event.parent === "object") return event.parent.id ?? event.parent.pk ?? null;
-        return event.parent;
-      })();
-      const parentMatches =
-        parentId != null && eventParent != null && Number(eventParent) === parentId;
-
-      const eventStudent = (() => {
-        if (event.student == null) return null;
-        if (typeof event.student === "object") {
-          return {
-            id: event.student.id ?? null,
-            lrn: event.student.lrn ?? null,
-            name: event.student.name ?? null,
-          };
-        }
-        return event.student;
-      })();
-
-      const studentLrnCandidate =
-        typeof eventStudent === "object"
-          ? eventStudent.lrn || eventStudent.id || null
-          : eventStudent;
-      const studentNameCandidate =
-        typeof eventStudent === "object" ? eventStudent.name || null : null;
-
-      const lrnMatches =
-        studentLrn &&
-        studentLrnCandidate &&
-        String(studentLrnCandidate).toLowerCase() === studentLrn;
-      const nameMatches =
-        studentName &&
-        studentNameCandidate &&
-        studentNameCandidate.trim().toLowerCase() === studentName;
-
-      const hasParentContext = parentId != null;
-      const hasStudentContext = Boolean(studentLrn || studentName);
-      const studentMatches =
-        (!studentLrn || lrnMatches) && (!studentName || nameMatches);
-
-      if (!hasParentContext && !hasStudentContext) return true;
-      if (hasParentContext && parentMatches) return true;
-      if (hasStudentContext && studentMatches) return true;
-      return false;
-    });
   };
 
   const loadEvents = async ({ skipLoading = false } = {}) => {
     if (!skipLoading) setLoading(true);
+    setError(null);
+    
     try {
-      const context = await determineParentContext();
-
-      const token = await AsyncStorage.getItem("token");
-      const headers = { "Content-Type": "application/json" };
-      if (token) headers.Authorization = `Token ${token}`;
-
-      const query = buildEventsQuery(context);
-      const resp = await fetch(query, { headers });
-      if (!resp.ok) {
-        throw new Error(`Events HTTP ${resp.status}`);
+      // Get section from route params or stored parent data
+      let section = route?.params?.section || null;
+      
+      if (!section) {
+        // Try to get section from stored parent data
+        const storedParent = await AsyncStorage.getItem('parent');
+        if (storedParent) {
+          try {
+            const parentData = JSON.parse(storedParent);
+            section = parentData.student_section || 
+                     (parentData.student && parentData.student.section) || 
+                     null;
+          } catch (e) {
+            console.warn('[Events] Failed to parse stored parent', e);
+          }
+        }
       }
-      const respData = await resp.json();
 
-      let data = respData;
-      // handle paginated DRF responses
-      if (data && data.results) data = data.results;
-      if (!Array.isArray(data)) data = [];
+      setStudentSection(section);
+      console.log('[Events] Loading events for section:', section);
 
-      const filtered = filterEventsByContext(data, context);
-
-      if (Array.isArray(filtered) && filtered.length) {
-        setEvents(
-          filtered.map((e, ix) => ({
-            id: e.id ? String(e.id) : String(ix + 1),
-            title: e.title || e.name || 'Event',
-            date: e.date || e.start_date || e.scheduled_at || '',
-            description: e.description || '',
-            icon: e.icon || 'calendar',
-            color: pickColor(e.id || e.title || ix),
-          }))
-        );
-      } else {
-        setEvents([]);
+      // Build query with section filter
+      const params = [];
+      if (section) {
+        params.push(`section=${encodeURIComponent(section)}`);
       }
+      
+      const queryUrl = params.length 
+        ? `${EVENTS_ENDPOINT}?${params.join('&')}` 
+        : EVENTS_ENDPOINT;
+
+      console.log('[Events] Fetching from:', queryUrl);
+
+      // Get token for authentication
+      const token = await AsyncStorage.getItem('token');
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers['Authorization'] = `Token ${token}`;
+      }
+
+      const response = await fetch(queryUrl, { headers });
+      console.log('[Events] Response status:', response.status);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      let data = await response.json();
+      console.log('[Events] Raw response:', data);
+
+      // Handle paginated response
+      if (data && data.results) {
+        data = data.results;
+      }
+
+      if (!Array.isArray(data)) {
+        data = [];
+      }
+
+      console.log('[Events] Received', data.length, 'events');
+
+      // Transform data for display
+      const transformedEvents = data.map((event, idx) => ({
+        id: event.id ? String(event.id) : String(idx + 1),
+        title: event.title || 'Untitled Event',
+        date: formatDate(event.scheduled_at),
+        rawDate: event.scheduled_at,
+        description: event.description || 'No description provided',
+        location: event.location || '',
+        eventType: event.event_type || 'general',
+        icon: event.icon || 'calendar',
+        color: pickColor(event.id || event.title || idx),
+        section: event.section || null,
+        teacher: event.teacher_name || null,
+      }));
+
+      // Sort by date (most recent first)
+      transformedEvents.sort((a, b) => {
+        if (!a.rawDate) return 1;
+        if (!b.rawDate) return -1;
+        return new Date(b.rawDate) - new Date(a.rawDate);
+      });
+
+      setEvents(transformedEvents);
       setError(null);
+      console.log('[Events] Successfully loaded', transformedEvents.length, 'events');
+
     } catch (err) {
-      console.warn('Failed to fetch events, using fallback', err);
-      setError('Could not load events');
+      console.error('[Events] Load failed:', err);
+      setError(err.message || 'Failed to load events');
       setEvents([]);
     } finally {
       setLoading(false);
@@ -233,10 +176,10 @@ const Events = ({ navigation }) => {
 
   useEffect(() => {
     loadEvents();
-  }, []);
+  }, [route?.params?.section]);
 
   const onRefresh = async () => {
-    console.log('[Events] onRefresh called');
+    console.log('[Events] Refreshing...');
     setRefreshing(true);
     await loadEvents({ skipLoading: true });
   };
@@ -254,13 +197,47 @@ const Events = ({ navigation }) => {
       onPress={() => navigation.navigate("EventDetails", { event: item })}
     >
       <View>
-        <View style={[styles.banner, { backgroundColor: item.color }] }>
+        <View style={[styles.banner, { backgroundColor: item.color }]}>
           <Ionicons name={item.icon} size={24} color="#fff" style={styles.icon} />
-          <Text style={styles.bannerText}>{item.title}</Text>
+          <Text style={styles.bannerText} numberOfLines={1}>{item.title}</Text>
         </View>
         <View style={styles.details}>
-          <Text style={[styles.date, { color: isDark ? "#a0aec0" : "#555" }]}>📅 {item.date}</Text>
-          <Text style={[styles.description, { color: isDark ? "#cbd5e0" : "#666" }]} numberOfLines={2}>{item.description}</Text>
+          <View style={styles.dateRow}>
+            <Ionicons 
+              name="calendar-outline" 
+              size={16} 
+              color={isDark ? "#a0aec0" : "#555"} 
+            />
+            <Text style={[styles.date, { color: isDark ? "#a0aec0" : "#555" }]}>
+              {item.date}
+            </Text>
+          </View>
+          
+          {item.location ? (
+            <View style={styles.locationRow}>
+              <Ionicons 
+                name="location-outline" 
+                size={16} 
+                color={isDark ? "#a0aec0" : "#555"} 
+              />
+              <Text style={[styles.location, { color: isDark ? "#a0aec0" : "#555" }]}>
+                {item.location}
+              </Text>
+            </View>
+          ) : null}
+
+          <Text 
+            style={[styles.description, { color: isDark ? "#cbd5e0" : "#666" }]} 
+            numberOfLines={2}
+          >
+            {item.description}
+          </Text>
+
+          {item.section && (
+            <View style={styles.sectionBadge}>
+              <Text style={styles.sectionText}>Section {item.section}</Text>
+            </View>
+          )}
         </View>
       </View>
     </TouchableOpacity>
@@ -271,7 +248,7 @@ const Events = ({ navigation }) => {
       colors={isDark ? ["#0b0f19", "#1a1f2b"] : ["#f5f5f5", "#ffffff"]}
       style={styles.container}
     >
-      {/* Header (same style as Attendance) */}
+      {/* Header */}
       <View
         style={[
           styles.header,
@@ -290,17 +267,39 @@ const Events = ({ navigation }) => {
             }
           }}
         />
-        <Text
-          style={[styles.headerTitle, { color: isDark ? "#fff" : "#333" }]}
-        >
-          Events
-        </Text>
+        <View style={{ flex: 1, marginLeft: 12 }}>
+          <Text style={[styles.headerTitle, { color: isDark ? "#fff" : "#333" }]}>
+            Events
+          </Text>
+          {studentSection && (
+            <Text style={[styles.headerSubtitle, { color: isDark ? "#a0aec0" : "#666" }]}>
+              Section {studentSection}
+            </Text>
+          )}
+        </View>
       </View>
 
       {/* Event List */}
       {loading ? (
-        <View style={{ padding: 16 }}>
+        <View style={styles.centerContent}>
           <Text style={{ color: isDark ? '#fff' : '#333' }}>Loading events…</Text>
+        </View>
+      ) : error ? (
+        <View style={styles.centerContent}>
+          <Ionicons 
+            name="alert-circle-outline" 
+            size={48} 
+            color={isDark ? '#e74c3c' : '#c0392b'} 
+          />
+          <Text style={[styles.errorText, { color: isDark ? '#fff' : '#333' }]}>
+            {error}
+          </Text>
+          <TouchableOpacity 
+            style={styles.retryButton}
+            onPress={() => loadEvents()}
+          >
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
         </View>
       ) : (
         <FlatList
@@ -310,8 +309,20 @@ const Events = ({ navigation }) => {
           contentContainerStyle={{ padding: 16 }}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={() => (
-            <View style={{ padding: 16 }}>
-              <Text style={{ color: isDark ? '#fff' : '#333' }}>{error ? error : 'No events found'}</Text>
+            <View style={styles.emptyContainer}>
+              <Ionicons 
+                name="calendar-outline" 
+                size={64} 
+                color={isDark ? '#555' : '#ccc'} 
+              />
+              <Text style={[styles.emptyText, { color: isDark ? '#fff' : '#333' }]}>
+                No events found
+              </Text>
+              {studentSection && (
+                <Text style={[styles.emptySubtext, { color: isDark ? '#a0aec0' : '#666' }]}>
+                  No events for Section {studentSection}
+                </Text>
+              )}
             </View>
           )}
           refreshControl={
@@ -343,30 +354,27 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: "700",
-    marginLeft: 12,
+  },
+  headerSubtitle: {
+    fontSize: 14,
+    marginTop: 2,
   },
   card: {
     borderRadius: 16,
-    padding: 16,
     marginBottom: 16,
     elevation: 2,
-  },
-  cardRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
+    overflow: 'hidden',
   },
   banner: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 12,
-    borderTopLeftRadius: 12,
-    borderTopRightRadius: 12,
   },
   bannerText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '700',
-    marginLeft: 8,
+    flex: 1,
   },
   details: {
     padding: 12,
@@ -374,18 +382,81 @@ const styles = StyleSheet.create({
   icon: {
     marginRight: 12,
   },
-  title: {
-    fontSize: 16,
-    fontWeight: "700",
-    marginBottom: 4,
+  dateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
   },
   date: {
     fontSize: 13,
-    marginBottom: 6,
+    marginLeft: 6,
+  },
+  locationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  location: {
+    fontSize: 13,
+    marginLeft: 6,
   },
   description: {
     fontSize: 14,
-    lineHeight: 18,
+    lineHeight: 20,
+    marginBottom: 8,
+  },
+  sectionBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(52, 152, 219, 0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginTop: 4,
+  },
+  sectionText: {
+    color: '#3498db',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  centerContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  errorText: {
+    fontSize: 16,
+    marginTop: 12,
+    textAlign: 'center',
+  },
+  retryButton: {
+    marginTop: 16,
+    backgroundColor: '#3498db',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+    minHeight: 300,
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginTop: 16,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    marginTop: 8,
+    textAlign: 'center',
   },
 });
 

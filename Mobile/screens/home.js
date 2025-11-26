@@ -15,7 +15,7 @@ import { useTheme } from '../components/ThemeContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused } from '@react-navigation/native';
 
-const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com";
+const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
 const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 const ALL_TEACHERS_ENDPOINT = `${BACKEND_URL}/api/parents/all-teachers-students/`;
 
@@ -153,6 +153,13 @@ const Home = ({ navigation }) => {
         return;
       }
 
+      // Persist the primary parent record so other screens (Events) can read student/section
+      try {
+        await AsyncStorage.setItem('parent', JSON.stringify(parentsList[0]));
+      } catch (e) {
+        console.warn('Failed to cache primary parent record', e);
+      }
+
       // Build a lookup of guardians per student for quick filtering on the Home screen
       const guardiansByStudent = fetchedParentRecords.reduce((acc, record) => {
         if (!record || typeof record !== 'object') return acc;
@@ -171,6 +178,7 @@ const Home = ({ navigation }) => {
           id: p.student_lrn || p.student || p.id,
           lrn: p.student_lrn || '',
           name: p.student_name,
+          section: p.student_section || (p.student && p.student.section) || null,
           teacherName: p.teacher_name || '',
           teacherPhone: p.contact_number || '',
           attendanceStatus: null,
@@ -319,6 +327,9 @@ const Home = ({ navigation }) => {
                                   </Text>
                                 </View>
                               </View>
+                              {c.section ? (
+                                <Text style={[styles.sectionText, { color: '#fff', marginTop: 4 }]}>Section: {c.section}</Text>
+                              ) : null}
                               <View style={styles.teacherRow}>
                                 <Text style={[styles.teacherName, { color: '#fff' }]}>
                                   {c.teacherName ? `Teacher: ${c.teacherName}` : 'Teacher: Not provided'}
@@ -402,7 +413,15 @@ const Home = ({ navigation }) => {
                     width: '100%',
                   },
                 ]}
-                onPress={() => navigation.navigate(item.screen)}
+                onPress={() => {
+                  // pass the first child's section when navigating to Events
+                  const section = (childNames && childNames.length && childNames[0].section) ? childNames[0].section : null;
+                  if (item.screen === 'event') {
+                    navigation.navigate(item.screen, section ? { section } : {});
+                  } else {
+                    navigation.navigate(item.screen);
+                  }
+                }}
               >
                 <Ionicons name={item.icon} size={28} color={item.color} />
                 <Text style={[styles.cardTitle, { color: isDark ? '#e6edf3' : '#333' }]}> 
@@ -431,7 +450,14 @@ const Home = ({ navigation }) => {
                         : 'flex-end',
                   },
                 ]}
-                onPress={() => navigation.navigate(item.screen)}
+                onPress={() => {
+                  const section = (childNames && childNames.length && childNames[0].section) ? childNames[0].section : null;
+                  if (item.screen === 'event') {
+                    navigation.navigate(item.screen, section ? { section } : {});
+                  } else {
+                    navigation.navigate(item.screen);
+                  }
+                }}
               >
                 <Ionicons name={item.icon} size={28} color={item.color} />
                 <Text style={[styles.cardTitle, { color: isDark ? '#e6edf3' : '#333' }]}> 
@@ -484,6 +510,10 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     marginTop: 4,
+  },
+  sectionText: {
+    fontSize: 13,
+    opacity: 0.95,
   },
   teacherInfo: {
     fontSize: 14,

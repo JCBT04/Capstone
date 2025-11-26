@@ -5,12 +5,9 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../components/ThemeContext";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com";
+const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
 const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
-const PARENTS_ENDPOINT = `${BACKEND_URL}/api/parents/parents/`;
-const ALL_TEACHERS_ENDPOINT = `${BACKEND_URL}/api/parents/all-teachers-students/`;
-const GUARDIAN_ENDPOINT = `${BACKEND_URL}/api/guardian/`;
-const GUARDIAN_PUBLIC_ENDPOINT = `${BACKEND_URL}/api/guardian/public/`;
+const PARENT_GUARDIAN_ENDPOINT = `${BACKEND_URL}/api/guardian/parent/`;
 
 const Unregistered = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();
@@ -22,185 +19,79 @@ const Unregistered = ({ navigation }) => {
   const [processingId, setProcessingId] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const extractParentsFromTeachers = (payload) => {
-    const teachersArray = Array.isArray(payload)
-      ? payload
-      : payload && Array.isArray(payload.results)
-        ? payload.results
-        : [];
-
-    const aggregated = [];
-    teachersArray.forEach((teacher) => {
-      if (!teacher || typeof teacher !== "object") return;
-      const students = Array.isArray(teacher.students) ? teacher.students : [];
-      students.forEach((student) => {
-        if (!student || typeof student !== "object") return;
-        const parents = Array.isArray(student.parents_guardians)
-          ? student.parents_guardians
-          : [];
-        parents.forEach((parent) => {
-          if (parent) aggregated.push(parent);
-        });
-      });
-    });
-    return aggregated;
-  };
-
-  const fetchParentRecords = async () => {
-    const token = await AsyncStorage.getItem('token');
-    const storedParentRaw = await AsyncStorage.getItem('parent');
-
-    let storedParent = null;
-    if (storedParentRaw) {
-      try {
-        storedParent = JSON.parse(storedParentRaw);
-      } catch (parseErr) {
-        console.warn("[Unregistered] Failed parsing stored parent data", parseErr);
-      }
-    }
-
-    const headers = { "Content-Type": "application/json" };
-    if (token) headers.Authorization = `Token ${token}`;
-
-    let parentRecords = [];
-    if (token) {
-      try {
-        const res = await fetch(PARENTS_ENDPOINT, { headers });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        let payload = await res.json();
-        if (Array.isArray(payload)) {
-          parentRecords = payload;
-        } else if (payload && Array.isArray(payload.results)) {
-          parentRecords = payload.results;
-        }
-      } catch (primaryErr) {
-        console.warn("[Unregistered] primary parents fetch failed", primaryErr);
-        try {
-          const fallbackRes = await fetch(ALL_TEACHERS_ENDPOINT, { headers });
-          if (!fallbackRes.ok) throw new Error(`Fallback HTTP ${fallbackRes.status}`);
-          const fallbackPayload = await fallbackRes.json();
-          parentRecords = extractParentsFromTeachers(fallbackPayload);
-        } catch (fallbackErr) {
-          console.warn("[Unregistered] fallback parents fetch failed", fallbackErr);
-        }
-      }
-    }
-
-    if (!parentRecords.length && storedParent) {
-      parentRecords = [storedParent];
-    }
-
-    return parentRecords;
-  };
-
-  const guardianMatchesStudent = (guardian, studentNamesSet) => {
-    if (!studentNamesSet || !studentNamesSet.size) return true;
-    const normalizedStudent = (guardian.student_name || "").trim().toLowerCase();
-    return normalizedStudent ? studentNamesSet.has(normalizedStudent) : false;
-  };
-
-  const buildStudentNamesSet = (parentRecords) => {
-    const set = new Set();
-    parentRecords.forEach((record) => {
-      const name = (record?.student_name || "").trim().toLowerCase();
-      if (name) set.add(name);
-    });
-    return set;
-  };
-
   const loadUnregistered = async ({ skipLoading = false } = {}) => {
-    let isMounted = true;
     if (!skipLoading) {
       setLoading(true);
       setError(null);
     }
+    
     try {
-      const token = await AsyncStorage.getItem('token');
-      const parentRecords = await fetchParentRecords();
-      const studentNamesSet = buildStudentNamesSet(parentRecords);
-
-      let guardians = [];
-      const endpointChain = [];
-      if (token) {
-        endpointChain.push({
-          url: GUARDIAN_ENDPOINT,
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Token ${token}`,
-          },
-        });
+      const parentData = await AsyncStorage.getItem('parent');
+      
+      if (!parentData) {
+        setError("Please log in first.");
+        setUnregisteredList([]);
+        setLoading(false);
+        setRefreshing(false);
+        return;
       }
-      endpointChain.push({
-        url: GUARDIAN_PUBLIC_ENDPOINT,
-        headers: { "Content-Type": "application/json" },
+
+      const parent = JSON.parse(parentData);
+      const parentId = parent.id;
+
+      // Fetch from parent-specific endpoint with parent_id
+      const response = await fetch(`${PARENT_GUARDIAN_ENDPOINT}?parent_id=${parentId}`, {
+        method: 'GET',
+        headers: {
+          "Content-Type": "application/json",
+        },
       });
-
-      let lastError = null;
-      for (const entry of endpointChain) {
-        try {
-          const resp = await fetch(entry.url, { headers: entry.headers });
-          if (!resp.ok) throw new Error(`Guardian HTTP ${resp.status}`);
-          let payload = await resp.json();
-          if (Array.isArray(payload)) {
-            guardians = payload;
-          } else if (payload && Array.isArray(payload.results)) {
-            guardians = payload.results;
-          } else {
-            guardians = [];
-          }
-          break;
-        } catch (fetchErr) {
-          lastError = fetchErr;
-          guardians = [];
-        }
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
       }
+      
+      const data = await response.json();
+      const guardians = Array.isArray(data) ? data : (data.results || []);
 
-      if (!guardians.length && lastError) {
-        throw lastError;
-      }
-
+      // Map backend data to frontend format
       const mapped = guardians
-        .filter((g) => g && guardianMatchesStudent(g, studentNamesSet))
         .map((g) => {
-          let photo = null;
-          try {
-            if (g.photo) {
-              photo = g.photo.startsWith("http") ? g.photo : `${BACKEND_URL}${g.photo}`;
-            }
-          } catch (e) {
-            photo = null;
+          // Use photo_url from serializer, fallback to photo field
+          let photoUri = null;
+          if (g.photo_url) {
+            photoUri = g.photo_url;
+          } else if (g.photo) {
+            photoUri = g.photo.startsWith("http") ? g.photo : `${BACKEND_URL}${g.photo}`;
           }
+
           return {
             id: g.id,
             name: g.name || "Unnamed Guardian",
             relation: g.relationship || "Guardian",
             studentName: g.student_name || "Unknown student",
             reason: g.contact ? `Contact: ${g.contact}` : "Awaiting approval",
-            photo,
+            photo: photoUri,
+            age: g.age,
+            address: g.address,
+            status: g.status,
           };
         });
 
       setUnregisteredList(mapped);
-      setError(mapped.length ? null : "No unregistered guardians.");
+      setError(mapped.length ? null : "No pending guardian requests.");
     } catch (err) {
       console.warn("Failed loading guardians", err);
       setError(err.message || "Failed to load guardians");
       setUnregisteredList([]);
     } finally {
-      if (isMounted) {
-        setLoading(false);
-        setRefreshing(false);
-      }
+      setLoading(false);
+      setRefreshing(false);
     }
   };
 
   useEffect(() => {
-    let mounted = true;
-    (async () => {
-      await loadUnregistered();
-      mounted = false;
-    })();
-    return () => { mounted = false };
+    loadUnregistered();
   }, []);
 
   const onRefresh = async () => {
@@ -208,40 +99,43 @@ const Unregistered = ({ navigation }) => {
     await loadUnregistered({ skipLoading: true });
   };
 
-  const performGuardianAction = async (guardianId, { method = "DELETE", body } = {}) => {
-    const token = await AsyncStorage.getItem('token');
-    if (!token) throw new Error("Teacher authentication required.");
-
-    const headers = {
-      "Content-Type": "application/json",
-      Authorization: `Token ${token}`,
-    };
-
-    const response = await fetch(`${GUARDIAN_ENDPOINT}${guardianId}/`, {
-      method,
-      headers,
-      body,
-    });
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(text || `HTTP ${response.status}`);
-    }
-  };
-
   const handleAllow = async (item) => {
     setProcessingId(item.id);
     try {
-      await performGuardianAction(item.id, {
+      const parentData = await AsyncStorage.getItem('parent');
+      if (!parentData) {
+        Alert.alert("Error", "Please log in first.");
+        setProcessingId(null);
+        return;
+      }
+
+      const parent = JSON.parse(parentData);
+      const parentId = parent.id;
+
+      console.log(`[Allow] Updating guardian ${item.id} to 'allowed' status`);
+
+      // Use PATCH for partial update (only status field)
+      const response = await fetch(`${PARENT_GUARDIAN_ENDPOINT}${item.id}/?parent_id=${parentId}`, {
         method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
-          relationship:
-            item.relation && !item.relation.toLowerCase().includes("authorized")
-              ? `${item.relation} (Authorized)`
-              : item.relation || "Authorized Guardian",
+          status: 'allowed',
         }),
       });
-      Alert.alert("Success", "Guardian approved and removed from the queue.");
+
+      const responseData = await response.text();
+      console.log(`[Allow] Response status: ${response.status}`);
+      console.log(`[Allow] Response data:`, responseData);
+
+      if (!response.ok) {
+        throw new Error(responseData || `HTTP ${response.status}`);
+      }
+
+      Alert.alert("Success", "Guardian approved successfully!");
+      
+      // Remove from list
       setUnregisteredList((prev) =>
         prev.filter((guardian) => String(guardian.id) !== String(item.id))
       );
@@ -254,32 +148,131 @@ const Unregistered = ({ navigation }) => {
   };
 
   const handleReject = async (item) => {
-    setProcessingId(item.id);
-    try {
-      await performGuardianAction(item.id, { method: "DELETE" });
-      Alert.alert("Removed", "Guardian request rejected successfully.");
-      setUnregisteredList((prev) =>
-        prev.filter((guardian) => String(guardian.id) !== String(item.id))
-      );
-    } catch (err) {
-      console.warn("Failed to remove guardian", err);
-      Alert.alert("Error", err.message || "Failed to reject guardian");
-    } finally {
-      setProcessingId(null);
-    }
+    Alert.alert(
+      "Confirm Rejection",
+      "Do you want to decline this guardian request or delete it permanently?",
+      [
+        {
+          text: "Cancel",
+          style: "cancel"
+        },
+        {
+          text: "Decline (Keep Record)",
+          onPress: async () => {
+            setProcessingId(item.id);
+            try {
+              const parentData = await AsyncStorage.getItem('parent');
+              if (!parentData) {
+                Alert.alert("Error", "Please log in first.");
+                setProcessingId(null);
+                return;
+              }
+
+              const parent = JSON.parse(parentData);
+              const parentId = parent.id;
+
+              console.log(`[Reject] Updating guardian ${item.id} to 'declined' status`);
+
+              // Use PATCH to update status to 'declined'
+              const response = await fetch(`${PARENT_GUARDIAN_ENDPOINT}${item.id}/?parent_id=${parentId}`, {
+                method: "PATCH",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  status: 'declined',
+                }),
+              });
+
+              const responseData = await response.text();
+              console.log(`[Reject] Response status: ${response.status}`);
+              console.log(`[Reject] Response data:`, responseData);
+
+              if (!response.ok) {
+                throw new Error(responseData || `HTTP ${response.status}`);
+              }
+
+              Alert.alert("Declined", "Guardian request declined successfully.");
+              
+              // Remove from list
+              setUnregisteredList((prev) =>
+                prev.filter((guardian) => String(guardian.id) !== String(item.id))
+              );
+            } catch (err) {
+              console.warn("Failed to decline guardian", err);
+              Alert.alert("Error", err.message || "Failed to decline guardian");
+            } finally {
+              setProcessingId(null);
+            }
+          }
+        },
+        {
+          text: "Delete Permanently",
+          style: "destructive",
+          onPress: async () => {
+            setProcessingId(item.id);
+            try {
+              const parentData = await AsyncStorage.getItem('parent');
+              if (!parentData) {
+                Alert.alert("Error", "Please log in first.");
+                setProcessingId(null);
+                return;
+              }
+
+              const parent = JSON.parse(parentData);
+              const parentId = parent.id;
+
+              console.log(`[Delete] Deleting guardian ${item.id}`);
+
+              const response = await fetch(`${PARENT_GUARDIAN_ENDPOINT}${item.id}/?parent_id=${parentId}`, {
+                method: "DELETE",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+              });
+
+              console.log(`[Delete] Response status: ${response.status}`);
+
+              if (!response.ok) {
+                const errorText = await response.text().catch(() => "");
+                throw new Error(errorText || `HTTP ${response.status}`);
+              }
+
+              Alert.alert("Removed", "Guardian deleted permanently.");
+              
+              // Remove from list
+              setUnregisteredList((prev) =>
+                prev.filter((guardian) => String(guardian.id) !== String(item.id))
+              );
+            } catch (err) {
+              console.warn("Failed to delete guardian", err);
+              Alert.alert("Error", err.message || "Failed to delete guardian");
+            } finally {
+              setProcessingId(null);
+            }
+          }
+        }
+      ]
+    );
   };
 
   const renderItem = ({ item }) => (
-      <View
-        style={[
-          styles.card,
-          { backgroundColor: isDark ? "#1e1e1e" : "#fff" },
-        ]}
-      >
+    <View
+      style={[
+        styles.card,
+        { backgroundColor: isDark ? "#1e1e1e" : "#fff" },
+      ]}
+    >
       {item.photo ? (
-        <Image source={{ uri: item.photo }} style={styles.guardianPhoto} />
+        <Image 
+          source={{ uri: item.photo }} 
+          style={styles.guardianPhoto}
+          onError={(e) => console.log("Image load error:", e.nativeEvent.error)}
+        />
       ) : (
-        <Ionicons name="person-circle-outline" size={40} color="#3498db" />
+        <View style={styles.guardianPhotoPlaceholder}>
+          <Ionicons name="person-circle-outline" size={40} color="#3498db" />
+        </View>
       )}
       <View style={{ flex: 1, marginLeft: 12 }}>
         <Text style={[styles.name, { color: isDark ? "#fff" : "#333" }]}>
@@ -324,18 +317,19 @@ const Unregistered = ({ navigation }) => {
           { borderBottomColor: isDark ? "#333" : "#ddd" },
         ]}
       >
-        <Ionicons
-          name="arrow-back"
-          size={24}
-          color={isDark ? "#fff" : "#333"}
-          onPress={() => {
-            if (navigation.canGoBack && navigation.canGoBack()) {
-              navigation.goBack();
-            } else {
-              navigation.navigate('home');
-            }
-          }}
-        />
+        <TouchableOpacity onPress={() => {
+          if (navigation.canGoBack && navigation.canGoBack()) {
+            navigation.goBack();
+          } else {
+            navigation.navigate('home');
+          }
+        }}>
+          <Ionicons
+            name="arrow-back"
+            size={24}
+            color={isDark ? "#fff" : "#333"}
+          />
+        </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: isDark ? "#fff" : "#333" }]}>
           Unregistered Guardians
         </Text>
@@ -354,7 +348,7 @@ const Unregistered = ({ navigation }) => {
           ListEmptyComponent={() => (
             <View style={{ padding: 24, alignItems: 'center' }}>
               <Text style={{ color: isDark ? '#ddd' : '#555', textAlign: 'center' }}>
-                {error ? error : 'No unregistered guardians.'}
+                {error || 'No pending guardian requests.'}
               </Text>
             </View>
           )}
@@ -423,6 +417,14 @@ const styles = StyleSheet.create({
     height: 56,
     borderRadius: 28,
     backgroundColor: '#ccc',
+  },
+  guardianPhotoPlaceholder: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
 

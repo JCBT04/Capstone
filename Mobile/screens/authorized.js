@@ -12,7 +12,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../components/ThemeContext";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com";   
+const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
 const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 const PARENTS_ENDPOINT = `${BACKEND_URL}/api/parents/parents/`;
 const PARENTS_PUBLIC_ENDPOINT = `${BACKEND_URL}/api/parents/parents/public/`;

@@ -10,6 +10,7 @@ import {
   Button,
   ScrollView,
   RefreshControl,
+  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -17,11 +18,7 @@ import * as ImagePicker from "expo-image-picker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useTheme } from "../components/ThemeContext";
 
-const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com";
-const FALLBACK_RENDER_BACKEND_URLS = [
-  DEFAULT_RENDER_BACKEND_URL,
-  "https://childtrack-backend.onrender.com",
-];
+const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com";
 const BACKEND_URL = DEFAULT_RENDER_BACKEND_URL.replace(/\/$/, "");
 
 const Profile = ({ navigation, route }) => {
@@ -170,6 +167,206 @@ const Profile = ({ navigation, route }) => {
     }
   };
 
+  const saveProfile = async () => {
+    if (saving) return;
+    if (!profile.id) {
+      Alert.alert("Error", "No parent ID available to save");
+      return;
+    }
+
+    // Validate password if provided
+    if (newPassword) {
+      if (newPassword !== confirmPassword) {
+        Alert.alert('Error', 'New passwords do not match');
+        return;
+      }
+      if (newPassword.length < 6) {
+        Alert.alert('Error', 'Password must be at least 6 characters');
+        return;
+      }
+    }
+
+    // Determine whether this save is part of a forced first-login change
+    const wasForced = !!((route && route.params && route.params.forceChange) || profile.must_change);
+
+    setSaving(true);
+
+    try {
+      const token = await AsyncStorage.getItem("token");
+      const endpoint = `${BACKEND_URL}/api/parents/parent/${profile.id}/`;
+      
+      console.log('[Profile] Saving to:', endpoint);
+      console.log('[Profile] Parent ID:', profile.id);
+
+      // Check if we have a new local image to upload
+      const isLocalImage = profile.image && !profile.image.startsWith("http");
+      console.log('[Profile] Is local image?', isLocalImage);
+      console.log('[Profile] Image URI:', profile.image?.substring(0, 100));
+
+      const formData = new FormData();
+      
+      // Add basic profile fields
+      if (profile.name) formData.append('name', profile.name);
+      if (profile.username) formData.append('username', profile.username);
+      if (profile.phone) formData.append('contact_number', profile.phone);
+      if (profile.address) formData.append('address', profile.address);
+
+      // Add password fields if provided
+      if (newPassword) {
+        formData.append('password', newPassword);
+        if (currentPassword) {
+          formData.append('current_password', currentPassword);
+        }
+      }
+
+      // Add avatar image if it's a local file
+      if (isLocalImage) {
+        const uri = profile.image;
+        const uriParts = uri.split("/");
+        let filename = uriParts[uriParts.length - 1];
+        
+        // Ensure filename has an extension
+        if (!filename.includes(".")) {
+          filename = `avatar_${Date.now()}.jpg`;
+        }
+
+        // Determine MIME type from file extension
+        let mime = "image/jpeg";
+        const match = filename.match(/\.([0-9a-zA-Z]+)(?:\?|$)/);
+        if (match) {
+          const ext = match[1].toLowerCase();
+          if (ext === "png") mime = "image/png";
+          else if (ext === "gif") mime = "image/gif";
+          else if (ext === "heic" || ext === "heif") mime = "image/heic";
+          else if (ext === "webp") mime = "image/webp";
+        }
+
+        console.log('[Profile] Attaching avatar:', { 
+          filename, 
+          mime, 
+          uriPreview: uri.substring(0, 80)
+        });
+        
+        // For React Native, the file object needs uri, name, and type
+        formData.append("avatar", {
+          uri: uri,
+          name: filename,
+          type: mime,
+        });
+      }
+
+      // Make the request
+      const headers = {
+        'Accept': 'application/json',
+        // Don't set Content-Type - let the browser/RN set it automatically for FormData
+      };
+      
+      if (token) {
+        headers['Authorization'] = `Token ${token}`;
+      }
+
+      console.log('[Profile] Request headers:', headers);
+      console.log('[Profile] Sending request with FormData');
+
+      const response = await fetch(endpoint, {
+        method: 'PATCH',
+        headers,
+        body: formData,
+      });
+
+      console.log('[Profile] Response status:', response.status);
+      console.log('[Profile] Response headers:', response.headers);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[Profile] Save failed:', response.status, errorText);
+        Alert.alert('Error', `Failed to save profile (${response.status}): ${errorText.substring(0, 100)}`);
+        throw new Error(`Failed to save profile: ${response.status}`);
+      }
+
+      const updated = await response.json();
+      console.log('[Profile] Save successful:', updated);
+      console.log('[Profile] Updated avatar field:', updated.avatar);
+
+      // Update local state with response
+      const avatarUrl = updated.avatar
+        ? (updated.avatar.startsWith("http") ? updated.avatar : `${BACKEND_URL}${updated.avatar}`)
+        : profile.image;
+
+      const normalized = {
+        ...updated,
+        contact_number: updated.contact_number ?? updated.phone ?? profile.phone,
+        address: updated.address ?? profile.address,
+        name: updated.name ?? profile.name,
+        username: updated.username ?? profile.username,
+        must_change: updated.must_change_credentials ?? false,
+      };
+
+      setProfile((prev) => ({
+        ...prev,
+        ...normalized,
+        phone: normalized.contact_number,
+        image: avatarUrl,
+      }));
+
+      // Cache the updated profile
+      try {
+        await AsyncStorage.setItem("parent", JSON.stringify(normalized));
+        if (normalized.username) {
+          await AsyncStorage.setItem("username", normalized.username);
+        }
+        await AsyncStorage.setItem("parent_must_change", normalized.must_change ? "1" : "0");
+      } catch (err) {
+        console.warn("[Profile] Failed to cache parent:", err?.message || err);
+      }
+
+      // If this was a forced credential change, log out and require re-login
+      if (wasForced) {
+        Alert.alert(
+          'Success',
+          'Profile updated! Please log in again with your new credentials.',
+          [
+            {
+              text: 'OK',
+              onPress: async () => {
+                try {
+                  await AsyncStorage.removeItem('token');
+                  await AsyncStorage.removeItem('parent');
+                  await AsyncStorage.removeItem('username');
+                  await AsyncStorage.removeItem('parent_must_change');
+                } catch (err) {
+                  console.warn('[Profile] Failed to clear session', err);
+                }
+                setModalVisible(false);
+                setTimeout(() => {
+                  try { 
+                    navigation.replace('login'); 
+                  } catch(e) { 
+                    navigation.navigate('login'); 
+                  }
+                }, 250);
+              }
+            }
+          ]
+        );
+      } else {
+        Alert.alert('Success', 'Profile updated successfully!');
+        setModalVisible(false);
+        
+        // Clear password fields
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+      }
+
+    } catch (err) {
+      console.error("[Profile] Save error:", err);
+      Alert.alert('Error', err.message || 'Failed to save profile. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <LinearGradient
       colors={isDark ? ["#0b0f19", "#1a1f2b"] : ["#f5f5f5", "#e0e0e0"]}
@@ -194,7 +391,18 @@ const Profile = ({ navigation, route }) => {
         </Text>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 30 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={isDark ? '#fff' : '#333'} colors={[isDark ? '#fff' : '#333']} progressBackgroundColor={isDark ? '#111' : '#fff'} />}>
+      <ScrollView 
+        contentContainerStyle={{ paddingBottom: 30 }} 
+        refreshControl={
+          <RefreshControl 
+            refreshing={refreshing} 
+            onRefresh={onRefresh} 
+            tintColor={isDark ? '#fff' : '#333'} 
+            colors={[isDark ? '#fff' : '#333']} 
+            progressBackgroundColor={isDark ? '#111' : '#fff'} 
+          />
+        }
+      >
         {/* Profile Card */}
         <View
           style={[
@@ -204,7 +412,14 @@ const Profile = ({ navigation, route }) => {
         >
           <TouchableOpacity onPress={() => setAvatarModalVisible(true)}>
             {profile.image ? (
-              <Image source={{ uri: profile.image }} style={styles.avatar} />
+              <Image 
+                source={{ uri: profile.image }} 
+                style={styles.avatar}
+                onError={(e) => {
+                  console.warn('[Profile] Image load error:', e.nativeEvent.error);
+                  setProfile(prev => ({ ...prev, image: null }));
+                }}
+              />
             ) : (
               <View
                 style={[
@@ -219,30 +434,36 @@ const Profile = ({ navigation, route }) => {
                 />
               </View>
             )}
+            <View style={styles.cameraIconContainer}>
+              <Ionicons name="camera" size={20} color="#fff" />
+            </View>
           </TouchableOpacity>
           <Text style={[styles.name, { color: isDark ? "#fff" : "#333" }]}>
-            {profile.name}
+            {profile.name || 'No Name'}
           </Text>
-          {/* email removed - profile displays name and address only */}
         </View>
 
-        {/* Info Section (order: username, contact, address) */}
+        {/* Info Section */}
         <View style={styles.infoSection}>
           <View style={[styles.infoItem, { backgroundColor: isDark ? "#1e1e1e" : "#fff" }]}>
             <Ionicons name="person-circle-outline" size={22} color="#8e44ad" />
-            <Text style={[styles.infoText, { color: isDark ? "#fff" : "#333" }]}>Username: {profile.username}</Text>
+            <Text style={[styles.infoText, { color: isDark ? "#fff" : "#333" }]}>
+              Username: {profile.username || 'Not set'}
+            </Text>
           </View>
 
           <View style={[styles.infoItem, { backgroundColor: isDark ? "#1e1e1e" : "#fff" }]}>
             <Ionicons name="call-outline" size={22} color="#27ae60" />
-          <Text style={[styles.infoText, { color: isDark ? "#fff" : "#333" }]}>Contact: {profile.phone || "No contact number"}
-          </Text>
+            <Text style={[styles.infoText, { color: isDark ? "#fff" : "#333" }]}>
+              Contact: {profile.phone || "No contact number"}
+            </Text>
           </View>
 
           <View style={[styles.infoItem, { backgroundColor: isDark ? "#1e1e1e" : "#fff" }]}>
             <Ionicons name="home-outline" size={22} color="#2980b9" />
-          <Text style={[styles.infoText, { color: isDark ? "#fff" : "#333" }]}>Address: {profile.address || "No address provided"}
-          </Text>
+            <Text style={[styles.infoText, { color: isDark ? "#fff" : "#333" }]}>
+              Address: {profile.address || "No address provided"}
+            </Text>
           </View>
         </View>
 
@@ -262,282 +483,135 @@ const Profile = ({ navigation, route }) => {
       {/* Edit Modal */}
       <Modal visible={modalVisible} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
-          <View
-            style={[
-              styles.modalContent,
-              { backgroundColor: isDark ? "#2c2c2c" : "#fff" },
-            ]}
-          >
-            <Text style={[styles.modalTitle, { color: isDark ? "#fff" : "#333" }]}>
-              Edit Profile
-            </Text>
+          <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center' }}>
+            <View
+              style={[
+                styles.modalContent,
+                { backgroundColor: isDark ? "#2c2c2c" : "#fff" },
+              ]}
+            >
+              <Text style={[styles.modalTitle, { color: isDark ? "#fff" : "#333" }]}>
+                Edit Profile
+              </Text>
 
-            {/* Input rows with icons */}
-            <View style={styles.inputRow}>
-              <Ionicons name="person-outline" size={20} color={isDark ? "#fff" : "#333"} />
-              <TextInput
-                style={[styles.input, { color: isDark ? "#fff" : "#000" }]}
-                placeholder="Name"
-                placeholderTextColor="#999"
-                value={profile.name}
-                onChangeText={(text) => setProfile({ ...profile, name: text })}
-              />
+              {/* Input rows with icons */}
+              <View style={styles.inputRow}>
+                <Ionicons name="person-outline" size={20} color={isDark ? "#fff" : "#333"} />
+                <TextInput
+                  style={[styles.input, { color: isDark ? "#fff" : "#000" }]}
+                  placeholder="Name"
+                  placeholderTextColor="#999"
+                  value={profile.name}
+                  onChangeText={(text) => setProfile({ ...profile, name: text })}
+                />
+              </View>
+
+              <View style={styles.inputRow}>
+                <Ionicons name="person-circle-outline" size={20} color={isDark ? "#fff" : "#333"} />
+                <TextInput
+                  style={[styles.input, { color: isDark ? "#fff" : "#000" }]}
+                  placeholder="Username"
+                  placeholderTextColor="#999"
+                  value={profile.username}
+                  onChangeText={(text) => setProfile({ ...profile, username: text })}
+                />
+              </View>
+
+              {/* Password change inputs */}
+              {(profile.must_change || (route && route.params && route.params.forceChange)) && (
+                <>
+                  <View style={styles.inputRow}>
+                    <Ionicons name="lock-closed-outline" size={20} color={isDark ? "#fff" : "#333"} />
+                    <TextInput
+                      style={[styles.input, { color: isDark ? "#fff" : "#000" }]}
+                      placeholder="Current password"
+                      placeholderTextColor="#999"
+                      value={currentPassword}
+                      onChangeText={setCurrentPassword}
+                      secureTextEntry={!showCurrentPassword}
+                    />
+                    <TouchableOpacity onPress={() => setShowCurrentPassword((s) => !s)} style={{ paddingHorizontal: 8 }}>
+                      <Ionicons name={showCurrentPassword ? "eye" : "eye-off"} size={20} color={isDark ? "#fff" : "#333"} />
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.inputRow}>
+                    <Ionicons name="key-outline" size={20} color={isDark ? "#fff" : "#333"} />
+                    <TextInput
+                      style={[styles.input, { color: isDark ? "#fff" : "#000" }]}
+                      placeholder="New password (required)"
+                      placeholderTextColor="#999"
+                      value={newPassword}
+                      onChangeText={setNewPassword}
+                      secureTextEntry={!showNewPassword}
+                    />
+                    <TouchableOpacity onPress={() => setShowNewPassword((s) => !s)} style={{ paddingHorizontal: 8 }}>
+                      <Ionicons name={showNewPassword ? "eye" : "eye-off"} size={20} color={isDark ? "#fff" : "#333"} />
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.inputRow}>
+                    <Ionicons name="checkmark-done-outline" size={20} color={isDark ? "#fff" : "#333"} />
+                    <TextInput
+                      style={[styles.input, { color: isDark ? "#fff" : "#000" }]}
+                      placeholder="Confirm new password"
+                      placeholderTextColor="#999"
+                      value={confirmPassword}
+                      onChangeText={setConfirmPassword}
+                      secureTextEntry={!showConfirmPassword}
+                    />
+                    <TouchableOpacity onPress={() => setShowConfirmPassword((s) => !s)} style={{ paddingHorizontal: 8 }}>
+                      <Ionicons name={showConfirmPassword ? "eye" : "eye-off"} size={20} color={isDark ? "#fff" : "#333"} />
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+
+              <View style={styles.inputRow}>
+                <Ionicons name="call-outline" size={20} color={isDark ? "#fff" : "#333"} />
+                <TextInput
+                  style={[styles.input, { color: isDark ? "#fff" : "#000" }]}
+                  placeholder="Phone"
+                  placeholderTextColor="#999"
+                  value={profile.phone}
+                  onChangeText={(text) => setProfile({ ...profile, phone: text })}
+                  keyboardType="phone-pad"
+                />
+              </View>
+
+              <View style={styles.inputRow}>
+                <Ionicons name="home-outline" size={20} color={isDark ? "#fff" : "#333"} />
+                <TextInput
+                  style={[styles.input, { color: isDark ? "#fff" : "#000" }]}
+                  placeholder="Address"
+                  placeholderTextColor="#999"
+                  value={profile.address}
+                  onChangeText={(text) => setProfile({ ...profile, address: text })}
+                  multiline
+                />
+              </View>
+
+              <View style={styles.modalButtons}>
+                <TouchableOpacity
+                  style={[styles.saveButton, { opacity: saving ? 0.6 : 1 }]}
+                  onPress={saveProfile}
+                  disabled={saving}
+                >
+                  <Text style={styles.saveButtonText}>
+                    {saving ? "Saving..." : "Save"}
+                  </Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={styles.cancelButtonStyle}
+                  onPress={() => setModalVisible(false)}
+                  disabled={saving}
+                >
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-
-            {/* email removed */}
-
-             <View style={styles.inputRow}>
-              <Ionicons name="person-circle-outline" size={20} color={isDark ? "#fff" : "#333"} />
-              <TextInput
-                style={[styles.input, { color: isDark ? "#fff" : "#000" }]}
-                placeholder="Username"
-                placeholderTextColor="#999"
-                value={profile.username}
-                onChangeText={(text) => setProfile({ ...profile, username: text })}
-              />
-            </View>
-
-            {/* Password change inputs (optional) */}
-            {(profile.must_change || (route && route.params && route.params.forceChange)) && (
-              <>
-                <View style={styles.inputRow}>
-                  <Ionicons name="lock-closed-outline" size={20} color={isDark ? "#fff" : "#333"} />
-                  <TextInput
-                    style={[styles.input, { color: isDark ? "#fff" : "#000" }]}
-                    placeholder="Current password (optional)"
-                    placeholderTextColor="#999"
-                    value={currentPassword}
-                    onChangeText={setCurrentPassword}
-                    secureTextEntry={!showCurrentPassword}
-                  />
-                  <TouchableOpacity onPress={() => setShowCurrentPassword((s) => !s)} style={{ paddingHorizontal: 8 }}>
-                    <Ionicons name={showCurrentPassword ? "eye" : "eye-off"} size={20} color={isDark ? "#fff" : "#333"} />
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.inputRow}>
-                  <Ionicons name="key-outline" size={20} color={isDark ? "#fff" : "#333"} />
-                  <TextInput
-                    style={[styles.input, { color: isDark ? "#fff" : "#000" }]}
-                    placeholder="New password (required for first login)"
-                    placeholderTextColor="#999"
-                    value={newPassword}
-                    onChangeText={setNewPassword}
-                    secureTextEntry={!showNewPassword}
-                  />
-                  <TouchableOpacity onPress={() => setShowNewPassword((s) => !s)} style={{ paddingHorizontal: 8 }}>
-                    <Ionicons name={showNewPassword ? "eye" : "eye-off"} size={20} color={isDark ? "#fff" : "#333"} />
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.inputRow}>
-                  <Ionicons name="checkmark-done-outline" size={20} color={isDark ? "#fff" : "#333"} />
-                  <TextInput
-                    style={[styles.input, { color: isDark ? "#fff" : "#000" }]}
-                    placeholder="Confirm new password"
-                    placeholderTextColor="#999"
-                    value={confirmPassword}
-                    onChangeText={setConfirmPassword}
-                    secureTextEntry={!showConfirmPassword}
-                  />
-                  <TouchableOpacity onPress={() => setShowConfirmPassword((s) => !s)} style={{ paddingHorizontal: 8 }}>
-                    <Ionicons name={showConfirmPassword ? "eye" : "eye-off"} size={20} color={isDark ? "#fff" : "#333"} />
-                  </TouchableOpacity>
-                </View>
-              </>
-            )}
-
-            <View style={styles.inputRow}>
-              <Ionicons name="call-outline" size={20} color={isDark ? "#fff" : "#333"} />
-              <TextInput
-                style={[styles.input, { color: isDark ? "#fff" : "#000" }]}
-                placeholder="Phone"
-                placeholderTextColor="#999"
-                value={profile.phone}
-                onChangeText={(text) => setProfile({ ...profile, phone: text })}
-              />
-            </View>
-
-            <View style={styles.inputRow}>
-              <Ionicons name="home-outline" size={20} color={isDark ? "#fff" : "#333"} />
-              <TextInput
-                style={[styles.input, { color: isDark ? "#fff" : "#000" }]}
-                placeholder="Address"
-                placeholderTextColor="#999"
-                value={profile.address}
-                onChangeText={(text) => setProfile({ ...profile, address: text })}
-              />
-            </View>
-
-           
-
-            <View style={styles.modalButtons}>
-              <Button
-                title={saving ? "Saving..." : "Save"}
-                onPress={async () => {
-                  if (saving) return;
-                  if (!profile.id) {
-                    console.warn("No parent id available to save");
-                    return;
-                  }
-                  // Determine whether this save is part of a forced first-login change
-                  const wasForced = !!((route && route.params && route.params.forceChange) || profile.must_change);
-
-                  setSaving(true);
-                  const token = await AsyncStorage.getItem("token");
-                  const endpoints = [];
-                  // Use the known correct parent detail endpoint and include reasonable fallbacks
-                  // Preferred: /api/parents/<id>/ (defined in backend/parents/urls.py)
-                  // Back-compat fallbacks: /api/parents/parent/<id>/ and /api/parent/<id>/
-                  for (const base of FALLBACK_RENDER_BACKEND_URLS) {
-                    const b = base.replace(/\/$/, "");
-                    endpoints.push(`${b}/api/parents/${profile.id}/`);
-                    endpoints.push(`${b}/api/parents/parent/${profile.id}/`);
-                    endpoints.push(`${b}/api/parent/${profile.id}/`);
-                  }
-
-                  const PATCH_JSON_HEADERS = {
-                    "Content-Type": "application/json",
-                    ...(token ? { Authorization: `Token ${token}` } : {}),
-                  };
-                  const PATCH_FORM_HEADERS = {
-                    Accept: "application/json",
-                    ...(token ? { Authorization: `Token ${token}` } : {}),
-                  };
-
-                    const updateLocalState = async (updated) => {
-                    const avatarUrl = updated.avatar
-                      ? (updated.avatar.startsWith("http") ? updated.avatar : `${BACKEND_URL}${updated.avatar}`)
-                      : null;
-                    const normalized = {
-                      ...updated,
-                      contact_number: updated.contact_number ?? updated.phone ?? profile.phone,
-                      address: updated.address ?? profile.address,
-                      name: updated.name ?? profile.name,
-                      username: updated.username ?? profile.username,
-                      must_change: updated.must_change_credentials ?? false,
-                    };
-                    setProfile((prev) => ({
-                      ...prev,
-                      ...normalized,
-                      phone: normalized.contact_number,
-                      image: avatarUrl || prev.image,
-                    }));
-                    try {
-                      await AsyncStorage.setItem("parent", JSON.stringify(normalized));
-                      if (normalized.username) {
-                        await AsyncStorage.setItem("username", normalized.username);
-                      }
-                      await AsyncStorage.setItem("parent_must_change", normalized.must_change ? "1" : "0");
-                    } catch (err) {
-                      console.warn("[Profile] Failed to cache parent:", err?.message || err);
-                    }
-
-                    // If this save was a forced first-login change, clear session and require re-login
-                    if (wasForced) {
-                      try {
-                        await AsyncStorage.removeItem('token');
-                        await AsyncStorage.removeItem('parent');
-                        await AsyncStorage.removeItem('username');
-                        await AsyncStorage.removeItem('parent_must_change');
-                      } catch (err) {
-                        console.warn('[Profile] Failed to clear session after forced change', err);
-                      }
-                      setModalVisible(false);
-                      // Navigate back to login so the user can sign in with new credentials
-                      setTimeout(() => {
-                        try { navigation.replace('login'); } catch(e) { navigation.navigate('login'); }
-                      }, 250);
-                      return;
-                    }
-                    setModalVisible(false);
-                  };
-
-                  const attemptRequests = async (optionsBuilder) => {
-                    for (const endpoint of endpoints) {
-                      try {
-                        const res = await fetch(endpoint, optionsBuilder(endpoint));
-                        if (res.ok) {
-                          const updated = await res.json();
-                          await updateLocalState(updated);
-                          return true;
-                        }
-                        const text = await res.text();
-                        console.warn(`[Profile] Save failed for ${endpoint}:`, res.status, text);
-                      } catch (err) {
-                        console.warn(`[Profile] Error saving to ${endpoint}:`, err?.message || err);
-                      }
-                    }
-                    return false;
-                  };
-
-                  try {
-                    const isLocalImage = profile.image && !profile.image.startsWith("http");
-                    const basePayload = {
-                      name: profile.name || "",
-                      username: profile.username || "",
-                      contact_number: profile.phone || "",
-                      address: profile.address || "",
-                    };
-
-                    // If user provided a new password, validate and include it in payload
-                    if (newPassword) {
-                      if (newPassword !== confirmPassword) {
-                        alert('New passwords do not match');
-                        setSaving(false);
-                        return;
-                      }
-                      // include password and current_password if provided
-                      basePayload.password = newPassword;
-                      if (currentPassword) basePayload.current_password = currentPassword;
-                    }
-
-                    let success = false;
-                    if (isLocalImage) {
-                      const formData = new FormData();
-                      Object.entries(basePayload).forEach(([key, value]) => formData.append(key, value));
-
-                      const uri = profile.image;
-                      const uriParts = uri.split("/");
-                      let filename = uriParts[uriParts.length - 1];
-                      if (!filename.includes(".")) filename = "avatar.jpg";
-                      let mime = "image/jpeg";
-                      const match = filename.match(/\.([0-9a-zA-Z]+)(?:\?|$)/);
-                      if (match) {
-                        const ext = match[1].toLowerCase();
-                        if (ext === "png") mime = "image/png";
-                        else if (ext === "heic") mime = "image/heic";
-                      }
-                      formData.append("avatar", { uri, name: filename, type: mime });
-
-                      success = await attemptRequests(() => ({
-                        method: "PATCH",
-                        headers: PATCH_FORM_HEADERS,
-                        body: formData,
-                      }));
-                    } else {
-                      const payload = { ...basePayload };
-                      success = await attemptRequests(() => ({
-                        method: "PATCH",
-                        headers: PATCH_JSON_HEADERS,
-                        body: JSON.stringify(payload),
-                      }));
-                    }
-
-                    if (!success) {
-                      alert("Failed to save profile. Please try again later.");
-                      return;
-                    }
-                  } catch (err) {
-                    console.warn("Error saving profile:", err.message || err);
-                  } finally {
-                    setSaving(false);
-                  }
-                }}
-              />
-              <Button title="Cancel" color="red" onPress={() => setModalVisible(false)} />
-            </View>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
 
@@ -654,8 +728,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 12,
   },
+  cameraIconContainer: {
+    position: 'absolute',
+    bottom: 12,
+    right: 0,
+    backgroundColor: '#3498db',
+    borderRadius: 15,
+    width: 30,
+    height: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   name: { fontSize: 20, fontWeight: "700" },
-  /* email style removed */
   infoSection: { marginTop: 10, marginHorizontal: 16 },
   infoItem: {
     flexDirection: "row",
@@ -665,7 +749,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     elevation: 2,
   },
-  infoText: { marginLeft: 12, fontSize: 15, fontWeight: "500" },
+  infoText: { marginLeft: 12, fontSize: 15, fontWeight: "500", flex: 1 },
   editButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -686,6 +770,7 @@ const styles = StyleSheet.create({
     width: "90%",
     padding: 20,
     borderRadius: 16,
+    maxHeight: '80%',
   },
   avatarModal: {
     width: "80%",
@@ -693,7 +778,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: "center",
   },
-  modalTitle: { fontSize: 18, fontWeight: "700", marginBottom: 12 },
+  modalTitle: { fontSize: 18, fontWeight: "700", marginBottom: 16 },
   inputRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -709,8 +794,30 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   modalButtons: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+    marginTop: 8,
+    gap: 10,
+  },
+  saveButton: {
+    backgroundColor: '#27ae60',
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  saveButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  cancelButtonStyle: {
+    backgroundColor: '#e74c3c',
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
   avatarOption: {
     flexDirection: "row",

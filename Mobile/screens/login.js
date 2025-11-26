@@ -14,7 +14,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../components/ThemeContext";
 
 // Default placeholder for Render URL
-const DEFAULT_RENDER_BACKEND_URL = "https://childtrack-backend.onrender.com/";
+const DEFAULT_RENDER_BACKEND_URL = "https://capstone-foal.onrender.com/";
 
 const Login = ({ navigation }) => {
   const { darkModeEnabled } = useTheme();

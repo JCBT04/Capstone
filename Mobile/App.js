@@ -51,7 +51,7 @@ export default function App() {
     >
       <StatusBar style={scheme === "dark" ? "light" : "dark"} />
       <Stack.Navigator
-        initialRouteName="loading"
+        initialRouteName="home"
         screenOptions={{ headerShown: false }}
       >
         <Stack.Screen name="loading" component={Loading} />
@@ -59,9 +59,9 @@ export default function App() {
         <Stack.Screen name="fpass" component={FPass} />
         <Stack.Screen name="home" component={Home} />
         <Stack.Screen name="event" component={Event} />
-        {/* Attendance is teacher-only; removed for parent-only mobile app */}
+        <Stack.Screen name="attendance" component={Attendance} />
         <Stack.Screen name="schedule" component={Schedule} />
-        {/* Unregistered is teacher-only; removed for parent-only mobile app */}
+        <Stack.Screen name="unregistered" component={Unregistered} />
         <Stack.Screen name="authorized" component={Authorized} />
         <Stack.Screen name="unauthorized" component={Unauthorized} />
         <Stack.Screen name="notification" component={Notification} />
