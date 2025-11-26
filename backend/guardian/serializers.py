@@ -1,4 +1,3 @@
-
 from rest_framework import serializers
 from .models import Guardian
 
@@ -20,6 +19,7 @@ class GuardianSerializer(serializers.ModelSerializer):
             'student_name',
             'photo',
             'photo_url',
+            'status',
             'timestamp'
         ]
         read_only_fields = ['id', 'timestamp', 'teacher_name', 'photo_url']
@@ -52,3 +52,9 @@ class GuardianSerializer(serializers.ModelSerializer):
         if not value or not value.strip():
             raise serializers.ValidationError("Student name cannot be empty.")
         return value.strip()
+    
+    def validate_status(self, value):
+        """Validate status is one of the allowed choices"""
+        if value not in ['pending', 'allowed', 'declined']:
+            raise serializers.ValidationError("Status must be 'pending', 'allowed', or 'declined'.")
+        return value
