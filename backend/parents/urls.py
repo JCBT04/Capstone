@@ -16,6 +16,7 @@ from .views import (
     ParentLoginView,
     ParentDetailView,
     ParentNotificationListCreateView,
+    ParentNotificationDetailView,
     ParentEventListCreateView,
     ParentEventDetailView,
     ParentScheduleListCreateView,
@@ -47,6 +48,8 @@ urlpatterns = [
     
     # Notifications
     path('notifications/', ParentNotificationListCreateView.as_view(), name='notification-list-create'),
+    # 11/27
+    path('notifications/<int:pk>/', ParentNotificationDetailView.as_view(), name='notification-detail'),
     
     # Announcements/Events
     path('events/', ParentEventListCreateView.as_view(), name='event-list-create'),

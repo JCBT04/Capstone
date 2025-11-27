@@ -181,6 +181,8 @@ class ParentNotification(models.Model):
     type = models.CharField(max_length=32, choices=NOTIFICATION_TYPES, default='other')
     message = models.TextField()
     extra_data = models.JSONField(blank=True, null=True)
+    # 11/27
+    read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

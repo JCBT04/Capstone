@@ -223,6 +223,7 @@ class ParentNotificationSerializer(serializers.ModelSerializer):
             'student',
             'student_name',
             'student_lrn',
+            'read', # 11/27
             'type',
             'message',
             'extra_data',
