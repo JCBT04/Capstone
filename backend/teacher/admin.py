@@ -1,7 +1,4 @@
 from django.contrib import admin
-import logging
-
-logger = logging.getLogger(__name__)
 from .models import TeacherProfile, Attendance, UnauthorizedPerson
 
 @admin.register(TeacherProfile)
@@ -12,17 +9,11 @@ class TeacherProfileAdmin(admin.ModelAdmin):
 
 @admin.register(Attendance)
 class AttendanceAdmin(admin.ModelAdmin):
-    # Temporarily simplify admin display to avoid runtime errors while debugging
-    list_display = ['id', 'date']
-    search_fields = ['student_name', 'student_lrn']
-
-    def get_queryset(self, request):
-        """Return queryset defensively; log exceptions and return empty queryset on error."""
-        try:
-            return super().get_queryset(request)
-        except Exception:
-            logger.exception('AttendanceAdmin.get_queryset failed')
-            return self.model.objects.none()
+    list_display = ['student_name', 'guardian_name', 'teacher', 'date', 'status', 'transaction_type', 'session', 'gender', 'timestamp']
+    search_fields = ['student_name', 'student_lrn', 'guardian_name', 'teacher__user__username']
+    list_filter = ['status', 'transaction_type', 'date', 'session', 'gender', 'teacher']
+    date_hierarchy = 'date'
+    ordering = ['-date', '-timestamp']
 
 @admin.register(UnauthorizedPerson)
 class UnauthorizedPersonAdmin(admin.ModelAdmin):

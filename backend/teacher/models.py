@@ -10,11 +10,7 @@ class TeacherProfile(models.Model):
     address = models.TextField()
 
     def __str__(self):
-        try:
-            return self.user.username if self.user is not None else f"TeacherProfile#{self.pk}"
-        except Exception:
-            # Defensive fallback in case the related User is missing or broken
-            return f"TeacherProfile#{getattr(self, 'pk', 'unknown')}"
+        return self.user.username
 
 class Attendance(models.Model):
     STATUS_CHOICES = [
