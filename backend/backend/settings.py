@@ -139,3 +139,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:8000",  # React frontend (local development)
     # removed invalid origin with path - add only scheme+host (e.g. https://example.com) if needed
 ]
+
+# Media files (uploads)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
