@@ -124,7 +124,6 @@ class ParentNotificationAdmin(admin.ModelAdmin):
 
 
 @admin.register(ParentEvent)
-@admin.register(ParentEvent)
 class ParentEventAdmin(admin.ModelAdmin):
     list_display = ['id', 'teacher', 'title', 'event_type', 'section', 'scheduled_at', 'created_at']
     list_filter = ['event_type', 'section', 'teacher', 'scheduled_at', 'created_at']
