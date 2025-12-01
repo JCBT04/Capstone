@@ -30,6 +30,9 @@ urlpatterns = [
     path('api/schedule/', ParentScheduleListCreateView.as_view(), name='schedule'),
 ]
 
+# Serve media files in all environments (needed for Render ephemeral filesystem workaround)
+# Note: For production, consider using S3/cloud storage instead
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
 if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
