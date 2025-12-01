@@ -48,8 +48,8 @@ class ParentGuardianSerializer(serializers.ModelSerializer):
             'id',
             'student',
             'student_name',
-            'student_section',
             'student_lrn',
+            'student_section',
             'student_gender',
             'teacher',
             'teacher_name',
@@ -161,12 +161,14 @@ class RegistrationSerializer(serializers.Serializer):
     parent2_name = serializers.CharField(max_length=100, required=False, allow_blank=True)
     parent2_contact = serializers.CharField(max_length=15, required=False, allow_blank=True)
     parent2_email = serializers.EmailField(required=False, allow_blank=True)
-   
+    parent2_username = serializers.CharField(max_length=150, required=False, allow_blank=True)
+    parent2_password = serializers.CharField(max_length=100, required=False, allow_blank=True)
 
     guardian_name = serializers.CharField(max_length=100, required=False, allow_blank=True)
     guardian_contact = serializers.CharField(max_length=15, required=False, allow_blank=True)
     guardian_email = serializers.EmailField(required=False, allow_blank=True)
-   
+    guardian_username = serializers.CharField(max_length=150, required=False, allow_blank=True)
+    guardian_password = serializers.CharField(max_length=100, required=False, allow_blank=True)
 
     address = serializers.CharField(required=False, allow_blank=True)
 
@@ -223,7 +225,6 @@ class ParentNotificationSerializer(serializers.ModelSerializer):
             'student',
             'student_name',
             'student_lrn',
-            'read', # 11/27
             'type',
             'message',
             'extra_data',

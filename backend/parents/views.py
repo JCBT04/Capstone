@@ -554,8 +554,8 @@ class ParentDetailView(APIView):
 
         if updated:
             # If parent was flagged to change credentials on first login, and the request
-            # includes a password change (username change optional), clear that flag.
-            if orig_must and changed_password:
+            # includes both a username change and a password change, clear that flag.
+            if orig_must and changed_username and changed_password:
                 parent.must_change_credentials = False
             parent.save()
             # debug after save
@@ -611,39 +611,6 @@ class ParentNotificationListCreateView(APIView):
             notification = serializer.save()
             output = ParentNotificationSerializer(notification).data
             return Response(output, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-# 11/27
-class ParentNotificationDetailView(APIView):
-    """
-    Retrieve or partially update a single notification (e.g., mark read)
-    Endpoint: /api/parents/notifications/<id>/
-    """
-    permission_classes = [permissions.AllowAny]
-
-    def get(self, request, pk):
-        try:
-            notif = ParentNotification.objects.select_related('parent', 'student').get(pk=pk)
-        except ParentNotification.DoesNotExist:
-            return Response({'error': 'Notification not found'}, status=status.HTTP_404_NOT_FOUND)
-        serializer = ParentNotificationSerializer(notif)
-        return Response(serializer.data)
-
-    def patch(self, request, pk):
-        try:
-            notif = ParentNotification.objects.get(pk=pk)
-        except ParentNotification.DoesNotExist:
-            return Response({'error': 'Notification not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        # Only allow updating the 'read' field from mobile clients
-        data = {}
-        if 'read' in request.data:
-            data['read'] = bool(request.data.get('read'))
-
-        serializer = ParentNotificationSerializer(notif, data=data, partial=True)
-        if serializer.is_valid():
-            updated = serializer.save()
-            return Response(ParentNotificationSerializer(updated).data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -935,3 +902,4 @@ class ParentScheduleListCreateView(APIView):
             output = ParentScheduleSerializer(schedule).data
             return Response(output, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+

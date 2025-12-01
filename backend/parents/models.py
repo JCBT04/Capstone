@@ -181,8 +181,6 @@ class ParentNotification(models.Model):
     type = models.CharField(max_length=32, choices=NOTIFICATION_TYPES, default='other')
     message = models.TextField()
     extra_data = models.JSONField(blank=True, null=True)
-    # 11/27
-    read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -197,18 +195,14 @@ class ParentNotification(models.Model):
 
 
 class ParentEvent(models.Model):
-    # Allow teacher to be nullable for existing rows when adding this field via migrations
-    teacher = models.ForeignKey('teacher.TeacherProfile', on_delete=models.CASCADE, related_name='events', null=True, blank=True)
+    teacher = models.ForeignKey('teacher.TeacherProfile', on_delete=models.CASCADE, related_name='events')
     parent = models.ForeignKey(ParentGuardian, on_delete=models.CASCADE, null=True, blank=True, related_name='events')
     student = models.ForeignKey(Student, on_delete=models.CASCADE, null=True, blank=True, related_name='events')
-    # Optional section target (e.g., 'Section A') — when set, the event targets parents of students in that section
     section = models.CharField(max_length=50, blank=True, null=True)
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
     event_type = models.CharField(max_length=50)
-    # Allow nulls during migration process; a data migration will populate
-    # any existing NULL values before this is made non-nullable.
-    scheduled_at = models.DateTimeField(null=True, blank=True)
+    scheduled_at = models.DateTimeField()
     location = models.CharField(max_length=200, blank=True)
     extra_data = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -271,5 +265,6 @@ class ParentSchedule(models.Model):
             return f"{self.subject} - {student_name}"
         except:
             return f"{self.subject}"
+
 
 
