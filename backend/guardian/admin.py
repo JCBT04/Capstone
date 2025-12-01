@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.utils.html import format_html
+from django.utils.safestring import mark_safe
 from .models import Guardian
 
 @admin.register(Guardian)
@@ -44,6 +45,12 @@ class GuardianAdmin(admin.ModelAdmin):
         }),
     )
     
+    class Media:
+        js = ('admin/js/guardian_photo_preview.js',)
+        css = {
+            'all': ('admin/css/guardian_admin.css',)
+        }
+    
     def teacher_display(self, obj):
         """Display teacher's full name"""
         return obj.teacher.user.get_full_name() or obj.teacher.user.username
@@ -74,13 +81,73 @@ class GuardianAdmin(admin.ModelAdmin):
     photo_thumbnail.short_description = 'Photo'
     
     def photo_preview(self, obj):
-        """Display larger preview in detail view"""
+        """Display larger preview in detail view with live preview for new uploads"""
+        preview_html = '''
+        <div id="photo-preview-container">
+            {existing_photo}
+            <div id="photo-preview-new" style="display: none; margin-top: 10px;">
+                <p style="color: #666; font-weight: bold;">New photo preview:</p>
+                <img id="photo-preview-img" src="" style="max-width: 300px; max-height: 300px; object-fit: contain; border: 1px solid #ddd; border-radius: 8px;" />
+            </div>
+        </div>
+        <script>
+            (function() {{
+                // Wait for DOM to be ready
+                if (document.readyState === 'loading') {{
+                    document.addEventListener('DOMContentLoaded', initPhotoPreview);
+                }} else {{
+                    initPhotoPreview();
+                }}
+                
+                function initPhotoPreview() {{
+                    const photoInput = document.querySelector('input[name="photo"]');
+                    if (!photoInput) return;
+                    
+                    photoInput.addEventListener('change', function(e) {{
+                        const file = e.target.files[0];
+                        const previewContainer = document.getElementById('photo-preview-new');
+                        const previewImg = document.getElementById('photo-preview-img');
+                        
+                        if (file && file.type.startsWith('image/')) {{
+                            const reader = new FileReader();
+                            reader.onload = function(e) {{
+                                previewImg.src = e.target.result;
+                                previewContainer.style.display = 'block';
+                            }};
+                            reader.readAsDataURL(file);
+                        }} else {{
+                            previewContainer.style.display = 'none';
+                        }}
+                    }});
+                    
+                    // Handle clear checkbox
+                    const clearCheckbox = document.querySelector('input[name="photo-clear"]');
+                    if (clearCheckbox) {{
+                        clearCheckbox.addEventListener('change', function(e) {{
+                            const previewContainer = document.getElementById('photo-preview-new');
+                            if (e.target.checked) {{
+                                previewContainer.style.display = 'none';
+                            }}
+                        }});
+                    }}
+                }}
+            }})();
+        </script>
+        '''
+        
         if obj.photo:
-            return format_html(
-                '<img src="{}" style="max-width: 300px; max-height: 300px; object-fit: contain; border: 1px solid #ddd; border-radius: 8px;" />',
+            existing_photo = format_html(
+                '''<div>
+                    <p style="color: #666; font-weight: bold;">Current photo:</p>
+                    <img src="{}" style="max-width: 300px; max-height: 300px; object-fit: contain; border: 1px solid #ddd; border-radius: 8px;" />
+                </div>''',
                 obj.photo.url
             )
-        return format_html('<span style="color: #999;">No photo uploaded</span>')
+        else:
+            existing_photo = '<p style="color: #999;">No photo uploaded yet</p>'
+        
+        return mark_safe(preview_html.format(existing_photo=existing_photo))
+    
     photo_preview.short_description = 'Photo Preview'
     
     def get_queryset(self, request):
