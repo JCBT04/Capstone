@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
+
 class TeacherProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     age = models.IntegerField()
@@ -7,8 +8,10 @@ class TeacherProfile(models.Model):
     section = models.CharField(max_length=50)
     contact = models.CharField(max_length=15)
     address = models.TextField()
+
     def __str__(self):
         return self.user.username
+
 class Attendance(models.Model):
     STATUS_CHOICES = [
         ('Present', 'Present'),
@@ -18,15 +21,21 @@ class Attendance(models.Model):
         ('Pick-up', 'Pick-up'),
         ('Dropped Out', 'Dropped Out'),
     ]
-
     GENDER_CHOICES = [
         ('Male', 'Male'),
         ('Female', 'Female'),
     ]
+    TRANSACTION_TYPE_CHOICES = [
+        ('attendance', 'Attendance'),
+        ('drop-off', 'Drop-off'),
+        ('pick-up', 'Pick-up'),
+    ]
+    
     teacher = models.ForeignKey(TeacherProfile, on_delete=models.CASCADE, related_name='attendances')
     student_name = models.CharField(max_length=100)
     student_lrn = models.CharField(max_length=50, blank=True, null=True)
     gender = models.CharField(max_length=10, choices=GENDER_CHOICES, default='Male')
+    guardian_name = models.CharField(max_length=100, blank=True, null=True)
     date = models.DateField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Present')
     qr_code_data = models.TextField(blank=True, null=True)
@@ -37,31 +46,45 @@ class Attendance(models.Model):
         null=True,
         blank=True
     )
+    transaction_type = models.CharField(
+        max_length=20,
+        choices=TRANSACTION_TYPE_CHOICES,
+        default='attendance',
+        help_text="Type of transaction: regular attendance, drop-off, or pick-up"
+    )
+    
     class Meta:
         ordering = ['-date', '-timestamp']
-        unique_together = ['teacher', 'student_name', 'date', 'session']
+
     def __str__(self):
-        return f"{self.student_name} - {self.status} - {self.date}"
+        return f"{self.student_name} - {self.status} ({self.transaction_type}) - {self.date}"
+
 class Absence(models.Model):
     teacher = models.ForeignKey(TeacherProfile, on_delete=models.CASCADE, related_name='absences')
     student_name = models.CharField(max_length=100)
     date = models.DateField()
     reason = models.TextField()
     timestamp = models.DateTimeField(auto_now_add=True)
+
     class Meta:
         ordering = ['-date', '-timestamp']
+
     def __str__(self):
         return f"{self.student_name} - Absent on {self.date}"
+
 class Dropout(models.Model):
     teacher = models.ForeignKey(TeacherProfile, on_delete=models.CASCADE, related_name='dropouts')
     student_name = models.CharField(max_length=100)
     date = models.DateField()
     reason = models.TextField()
     timestamp = models.DateTimeField(auto_now_add=True)
+
     class Meta:
         ordering = ['-date', '-timestamp']
+
     def __str__(self):
         return f"{self.student_name} - Dropout on {self.date}"
+
 class UnauthorizedPerson(models.Model):
     teacher = models.ForeignKey(TeacherProfile, on_delete=models.CASCADE, related_name='unauthorized_persons')
     name = models.CharField(max_length=100)
@@ -73,7 +96,9 @@ class UnauthorizedPerson(models.Model):
     contact = models.CharField(max_length=15)
     photo = models.TextField(blank=True, null=True)  # Base64 encoded image
     timestamp = models.DateTimeField(auto_now_add=True)
+
     class Meta:
         ordering = ['-timestamp']
+
     def __str__(self):
         return f"{self.name} - {self.student_name}"
