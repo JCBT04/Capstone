@@ -12,25 +12,15 @@ class TeacherProfileAdmin(admin.ModelAdmin):
 
 @admin.register(Attendance)
 class AttendanceAdmin(admin.ModelAdmin):
-    list_display = ['student_name', 'guardian_name', 'teacher_username', 'date', 'status', 'transaction_type', 'session', 'gender', 'timestamp']
-    search_fields = ['student_name', 'student_lrn', 'guardian_name', 'teacher__user__username']
-    list_filter = ['status', 'transaction_type', 'date', 'session', 'gender', 'teacher']
-    date_hierarchy = 'date'
-    ordering = ['-date', '-timestamp']
-
-    def teacher_username(self, obj):
-        try:
-            return obj.teacher.user.username if obj.teacher and getattr(obj.teacher, 'user', None) else '—'
-        except Exception:
-            return '—'
-    teacher_username.short_description = 'Teacher'
+    # Temporarily simplify admin display to avoid runtime errors while debugging
+    list_display = ['id', 'date']
+    search_fields = ['student_name', 'student_lrn']
 
     def get_queryset(self, request):
-        """Defensive queryset: log exceptions and return empty queryset instead of raising 500."""
+        """Return queryset defensively; log exceptions and return empty queryset on error."""
         try:
-            qs = super().get_queryset(request)
-            return qs
-        except Exception as e:
+            return super().get_queryset(request)
+        except Exception:
             logger.exception('AttendanceAdmin.get_queryset failed')
             return self.model.objects.none()
 
