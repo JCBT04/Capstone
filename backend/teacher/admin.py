@@ -1,4 +1,7 @@
 from django.contrib import admin
+import logging
+
+logger = logging.getLogger(__name__)
 from .models import TeacherProfile, Attendance, UnauthorizedPerson
 
 @admin.register(TeacherProfile)
@@ -21,6 +24,15 @@ class AttendanceAdmin(admin.ModelAdmin):
         except Exception:
             return '—'
     teacher_username.short_description = 'Teacher'
+
+    def get_queryset(self, request):
+        """Defensive queryset: log exceptions and return empty queryset instead of raising 500."""
+        try:
+            qs = super().get_queryset(request)
+            return qs
+        except Exception as e:
+            logger.exception('AttendanceAdmin.get_queryset failed')
+            return self.model.objects.none()
 
 @admin.register(UnauthorizedPerson)
 class UnauthorizedPersonAdmin(admin.ModelAdmin):
