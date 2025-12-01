@@ -83,11 +83,11 @@ class GuardianAdmin(admin.ModelAdmin):
     def photo_preview(self, obj):
         """Display larger preview in detail view with live preview for new uploads"""
         preview_html = '''
-        <div id="photo-preview-container">
+        <div id="photo-preview-container" style="margin-top: 10px;">
             {existing_photo}
-            <div id="photo-preview-new" style="display: none; margin-top: 10px;">
-                <p style="color: #666; font-weight: bold;">New photo preview:</p>
-                <img id="photo-preview-img" src="" style="max-width: 300px; max-height: 300px; object-fit: contain; border: 1px solid #ddd; border-radius: 8px;" />
+            <div id="photo-preview-new" style="display: none; margin-top: 15px; padding: 10px; background-color: #f9f9f9; border: 1px solid #ddd; border-radius: 8px;">
+                <p style="color: #666; font-weight: bold; margin-bottom: 10px;">📷 New photo preview:</p>
+                <img id="photo-preview-img" src="" style="max-width: 400px; max-height: 400px; object-fit: contain; border: 2px solid #4CAF50; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);" />
             </div>
         </div>
         <script>
@@ -101,22 +101,34 @@ class GuardianAdmin(admin.ModelAdmin):
                 
                 function initPhotoPreview() {{
                     const photoInput = document.querySelector('input[name="photo"]');
-                    if (!photoInput) return;
+                    if (!photoInput) {{
+                        console.log('Photo input not found');
+                        return;
+                    }}
                     
                     photoInput.addEventListener('change', function(e) {{
                         const file = e.target.files[0];
                         const previewContainer = document.getElementById('photo-preview-new');
                         const previewImg = document.getElementById('photo-preview-img');
                         
+                        console.log('File selected:', file);
+                        
                         if (file && file.type.startsWith('image/')) {{
                             const reader = new FileReader();
                             reader.onload = function(e) {{
+                                console.log('File loaded successfully');
                                 previewImg.src = e.target.result;
                                 previewContainer.style.display = 'block';
+                            }};
+                            reader.onerror = function(e) {{
+                                console.error('Error reading file:', e);
                             }};
                             reader.readAsDataURL(file);
                         }} else {{
                             previewContainer.style.display = 'none';
+                            if (file) {{
+                                alert('Please select a valid image file.');
+                            }}
                         }}
                     }});
                     
@@ -136,15 +148,31 @@ class GuardianAdmin(admin.ModelAdmin):
         '''
         
         if obj.photo:
-            existing_photo = format_html(
-                '''<div>
-                    <p style="color: #666; font-weight: bold;">Current photo:</p>
-                    <img src="{}" style="max-width: 300px; max-height: 300px; object-fit: contain; border: 1px solid #ddd; border-radius: 8px;" />
-                </div>''',
-                obj.photo.url
-            )
+            try:
+                existing_photo = format_html(
+                    '''<div style="margin-bottom: 15px;">
+                        <p style="color: #666; font-weight: bold; margin-bottom: 10px;">✅ Current photo:</p>
+                        <img src="{}" style="max-width: 400px; max-height: 400px; object-fit: contain; border: 2px solid #2196F3; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);" 
+                             onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+                        <p style="display: none; color: #d32f2f; padding: 10px; background-color: #ffebee; border-radius: 4px;">
+                            ⚠️ Error loading image. File path: {}
+                        </p>
+                        <p style="color: #999; font-size: 12px; margin-top: 8px;">
+                            Photo URL: <a href="{}" target="_blank">{}</a>
+                        </p>
+                    </div>''',
+                    obj.photo.url,
+                    obj.photo.url,
+                    obj.photo.url,
+                    obj.photo.url
+                )
+            except Exception as e:
+                existing_photo = format_html(
+                    '<p style="color: #d32f2f;">Error loading photo: {}</p>',
+                    str(e)
+                )
         else:
-            existing_photo = '<p style="color: #999;">No photo uploaded yet</p>'
+            existing_photo = '<p style="color: #999; font-style: italic;">📷 No photo uploaded yet</p>'
         
         return mark_safe(preview_html.format(existing_photo=existing_photo))
     
