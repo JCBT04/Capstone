@@ -18,6 +18,7 @@ from .views import (
     ParentEventListCreateView,
     ParentEventDetailView,
     ParentScheduleListCreateView,
+    AvatarDebugView,
 )
 
 urlpatterns = [
