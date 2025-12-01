@@ -280,7 +280,7 @@ class ParentGuardianListView(APIView):
             
             paginator = self.pagination_class()
             page = paginator.paginate_queryset(qs, request)
-            serializer = ParentGuardianSerializer(page, many=True)
+            serializer = ParentGuardianSerializer(page, many=True, context={'request': request})
             return paginator.get_paginated_response(serializer.data)
         except TeacherProfile.DoesNotExist:
             return Response({"error": "Teacher profile not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -304,7 +304,7 @@ class StudentDetailView(APIView):
         parents = ParentGuardian.objects.filter(student=student)
         response_data = {
             "student": StudentSerializer(student).data,
-            "parents_guardians": ParentGuardianSerializer(parents, many=True).data,
+            "parents_guardians": ParentGuardianSerializer(parents, many=True, context={'request': request}).data,
         }
         return Response(response_data)
 
@@ -443,7 +443,7 @@ class ParentGuardianPublicListView(APIView):
             except (TypeError, ValueError):
                 logger.warning("Invalid limit param for ParentGuardianPublicListView: %s", limit)
 
-        serializer = ParentGuardianSerializer(queryset, many=True)
+        serializer = ParentGuardianSerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data)
 
 
