@@ -137,6 +137,18 @@ class ParentEventAdmin(admin.ModelAdmin):
         ('System', {'fields': ('created_at', 'updated_at'), 'classes': ('collapse',)}),
     )
     
+    def get_queryset(self, request):
+        """Return all events; superusers see all, regular teachers see only their own."""
+        qs = super().get_queryset(request)
+        if not request.user.is_superuser:
+            try:
+                teacher_profile = request.user.teacherprofile
+                qs = qs.filter(teacher=teacher_profile)
+            except:
+                # If user is not a teacher, show nothing
+                qs = qs.none()
+        return qs
+    
 @admin.register(ParentSchedule)
 class ParentScheduleAdmin(admin.ModelAdmin):
     list_display = ['id', 'student', 'subject', 'day_of_week', 'time_label', 'room', 'created_at']
